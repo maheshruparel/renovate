@@ -1,7 +1,7 @@
-import { logger } from '../../../logger';
-import { platform } from '../../../platform';
-import { PackageFile } from '../../../manager/common';
 import { RenovateConfig } from '../../../config';
+import { logger } from '../../../logger';
+import { PackageFile } from '../../../manager/common';
+import { platform } from '../../../platform';
 
 export async function raiseDeprecationWarnings(
   config: RenovateConfig,
@@ -10,10 +10,7 @@ export async function raiseDeprecationWarnings(
   if (!config.repoIsOnboarded) {
     return;
   }
-  if (
-    config.suppressNotifications &&
-    config.suppressNotifications.includes('deprecationWarningIssues')
-  ) {
+  if (config.suppressNotifications?.includes('deprecationWarningIssues')) {
     return;
   }
   for (const [manager, files] of Object.entries(packageFiles)) {
@@ -53,7 +50,7 @@ export async function raiseDeprecationWarnings(
       issueTitleList.push(issueTitle);
       let issueBody = deprecationMessage;
       issueBody += `\n\nAffected package file(s): ${depPackageFiles
-        .map(f => '`' + f + '`')
+        .map((f) => '`' + f + '`')
         .join(', ')}`;
       issueBody += `\n\nIf you don't care about this, you can close this issue and not be warned about \`${depName}\`'s deprecation again. If you would like to completely disable all future deprecation warnings then add the following to your config:\n\n\`\`\`\n"suppressNotifications": ["deprecationWarningIssues"]\n\`\`\`\n\n`;
       // istanbul ignore if
@@ -72,9 +69,9 @@ export async function raiseDeprecationWarnings(
       'Checking for existing deprecated package issues missing in current deprecatedPackages'
     );
     const issueList = await platform.getIssueList();
-    if (issueList && issueList.length) {
+    if (issueList?.length) {
       const deprecatedIssues = issueList.filter(
-        i => i.title.startsWith(issueTitlePrefix) && i.state === 'open'
+        (i) => i.title.startsWith(issueTitlePrefix) && i.state === 'open'
       );
       for (const i of deprecatedIssues) {
         if (!issueTitleList.includes(i.title)) {

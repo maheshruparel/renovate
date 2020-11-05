@@ -1,16 +1,10 @@
-import { URL } from 'url';
-import { PR_STATE_CLOSED } from '../../constants/pull-requests';
-import { GotResponse } from '..';
-import { partial } from '../../../test/util';
-import { GiteaGotApi, GiteaGotOptions } from './gitea-got-wrapper';
+import * as httpMock from '../../../test/httpMock';
+import { PrState } from '../../types';
+import { setBaseUrl } from '../../util/http/gitea';
 import * as ght from './gitea-helper';
-import { PRSearchParams } from './gitea-helper';
 
 describe('platform/gitea/gitea-helper', () => {
-  let helper: typeof import('./gitea-helper');
-  let api: jest.Mocked<GiteaGotApi>;
-
-  const baseURL = 'https://gitea.renovatebot.com/api/v1';
+  const baseUrl = 'https://gitea.renovatebot.com/api/v1';
 
   const mockCommitHash = '0d9c7726c3d628b7e28af234595cfd20febdbf8e';
 
@@ -69,14 +63,14 @@ describe('platform/gitea/gitea-helper', () => {
 
   const mockPR: ght.PR = {
     number: 13,
-    state: 'open',
+    state: PrState.Open,
     title: 'Some PR',
     body: 'Lorem ipsum dolor sit amet',
     mergeable: true,
     diff_url: `https://gitea.renovatebot.com/${mockRepo.full_name}/pulls/13.diff`,
     base: { ref: mockRepo.default_branch },
     head: {
-      ref: 'pull-req-13',
+      label: 'pull-req-13',
       sha: mockCommitHash,
       repo: mockRepo,
     },
@@ -103,6 +97,7 @@ describe('platform/gitea/gitea-helper', () => {
     context: 'some-context',
     description: 'some-description',
     target_url: 'https://gitea.renovatebot.com/commit-status',
+    created_at: '2020-03-25T00:00:00Z',
   };
 
   const otherMockCommitStatus: ght.CommitStatus = {
@@ -142,136 +137,75 @@ describe('platform/gitea/gitea-helper', () => {
     path: 'nested/path/dummy.txt',
   };
 
-  const mockAPI = <B extends object = undefined, P extends object = {}>(
-    userOptions: {
-      method?: 'get' | 'post' | 'put' | 'patch' | 'head' | 'delete';
-      urlPattern?: string | RegExp;
-      queryParams?: Record<string, string[]>;
-      postParams?: P;
-    },
-    body: B = undefined
-  ) => {
-    // Merge default options with user options
-    const options = {
-      method: 'get',
-      ...userOptions,
-    };
-
-    // Mock request implementation once and verify request
-    api[options.method].mockImplementationOnce(
-      (rawUrl: string, apiOpts?: GiteaGotOptions): Promise<GotResponse<B>> => {
-        // Construct and parse absolute URL
-        const absoluteUrl = rawUrl.includes('://')
-          ? rawUrl
-          : `${baseURL}/${rawUrl}`;
-        const url = new URL(absoluteUrl);
-
-        // Check optional URL pattern matcher
-        if (options.urlPattern !== undefined) {
-          const regex =
-            options.urlPattern instanceof RegExp
-              ? options.urlPattern
-              : new RegExp(`^${options.urlPattern}$`);
-
-          if (!regex.exec(url.pathname)) {
-            throw new Error(
-              `expected url [${url.pathname}] to match pattern: ${options.urlPattern}`
-            );
-          }
-        }
-
-        // Check optional query params
-        if (options.queryParams !== undefined) {
-          for (const [key, expected] of Object.entries(options.queryParams)) {
-            expect(url.searchParams.getAll(key)).toEqual(expected);
-          }
-        }
-
-        // Check optional post parameters
-        if (options.postParams !== undefined) {
-          expect(apiOpts.body).toEqual(options.postParams);
-        }
-
-        return Promise.resolve(
-          partial<GotResponse<B>>({ body })
-        );
-      }
-    );
-  };
-
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.resetAllMocks();
-    jest.mock('./gitea-got-wrapper');
-
-    helper = (await import('./gitea-helper')) as any;
-    api = (await import('./gitea-got-wrapper')).api as any;
+    httpMock.reset();
+    httpMock.setup();
+    setBaseUrl(baseUrl);
   });
 
   describe('getCurrentUser', () => {
     it('should call /api/v1/user endpoint', async () => {
-      mockAPI<ght.User>({ urlPattern: '/api/v1/user' }, mockUser);
+      httpMock.scope(baseUrl).get('/user').reply(200, mockUser);
 
-      const res = await helper.getCurrentUser();
+      const res = await ght.getCurrentUser();
       expect(res).toEqual(mockUser);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('searchRepos', () => {
     it('should call /api/v1/repos/search endpoint', async () => {
-      mockAPI<ght.RepoSearchResults>(
-        { urlPattern: '/api/v1/repos/search' },
-        {
+      httpMock
+        .scope(baseUrl)
+        .get('/repos/search')
+        .reply(200, {
           ok: true,
           data: [mockRepo, otherMockRepo],
-        }
-      );
+        });
 
-      const res = await helper.searchRepos({});
+      const res = await ght.searchRepos({});
       expect(res).toEqual([mockRepo, otherMockRepo]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should construct proper query parameters', async () => {
-      mockAPI<ght.RepoSearchResults>(
-        {
-          urlPattern: '/api/v1/repos/search',
-          queryParams: {
-            uid: ['13'],
-          },
-        },
-        {
+      httpMock
+        .scope(baseUrl)
+        .get('/repos/search?uid=13')
+        .reply(200, {
           ok: true,
           data: [otherMockRepo],
-        }
-      );
+        });
 
-      const res = await helper.searchRepos({
+      const res = await ght.searchRepos({
         uid: 13,
       });
       expect(res).toEqual([otherMockRepo]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should abort if ok flag was not set', async () => {
-      mockAPI<ght.RepoSearchResults>(
-        { urlPattern: '/api/v1/repos/search' },
-        {
-          ok: false,
-          data: [],
-        }
-      );
+      httpMock.scope(baseUrl).get('/repos/search').reply(200, {
+        ok: false,
+        data: [],
+      });
 
-      await expect(helper.searchRepos({})).rejects.toThrow();
+      await expect(ght.searchRepos({})).rejects.toThrow();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('getRepo', () => {
     it('should call /api/v1/repos/[repo] endpoint', async () => {
-      mockAPI<ght.Repo>(
-        { urlPattern: `/api/v1/repos/${mockRepo.full_name}` },
-        mockRepo
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}`)
+        .reply(200, mockRepo);
 
-      const res = await helper.getRepo(mockRepo.full_name);
+      const res = await ght.getRepo(mockRepo.full_name);
       expect(res).toEqual(mockRepo);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
@@ -279,65 +213,63 @@ describe('platform/gitea/gitea-helper', () => {
     it('should call /api/v1/repos/[repo]/contents/[file] endpoint', async () => {
       // The official API only returns the base64-encoded content, so we strip `contentString`
       // from our mock to verify base64 decoding.
-      mockAPI<ght.RepoContents>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/contents/${mockContents.path}`,
-        },
-        { ...mockContents, contentString: undefined }
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/contents/${mockContents.path}`)
+        .reply(200, { ...mockContents, contentString: undefined });
 
-      const res = await helper.getRepoContents(
+      const res = await ght.getRepoContents(
         mockRepo.full_name,
         mockContents.path
       );
       expect(res).toEqual(mockContents);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should support passing reference by query', async () => {
-      mockAPI<ght.RepoContents>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/contents/${mockContents.path}`,
-          queryParams: {
-            ref: [mockCommitHash],
-          },
-        },
-        { ...mockContents, contentString: undefined }
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(
+          `/repos/${mockRepo.full_name}/contents/${mockContents.path}?ref=${mockCommitHash}`
+        )
+        .reply(200, { ...mockContents, contentString: undefined });
 
-      const res = await helper.getRepoContents(
+      const res = await ght.getRepoContents(
         mockRepo.full_name,
         mockContents.path,
         mockCommitHash
       );
       expect(res).toEqual(mockContents);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should properly escape paths', async () => {
       const escapedPath = encodeURIComponent(otherMockContents.path);
 
-      mockAPI<ght.RepoContents>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/contents/${escapedPath}`,
-        },
-        otherMockContents
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/contents/${escapedPath}`)
+        .reply(200, otherMockContents);
 
-      const res = await helper.getRepoContents(
+      const res = await ght.getRepoContents(
         mockRepo.full_name,
         otherMockContents.path
       );
       expect(res).toEqual(otherMockContents);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should not fail if no content is returned', async () => {
-      mockAPI<ght.RepoContents>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/contents/${mockContents.path}`,
-        },
-        { ...mockContents, content: undefined, contentString: undefined }
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/contents/${mockContents.path}`)
+        .reply(200, {
+          ...mockContents,
+          content: undefined,
+          contentString: undefined,
+        });
 
-      const res = await helper.getRepoContents(
+      const res = await ght.getRepoContents(
         mockRepo.full_name,
         mockContents.path
       );
@@ -351,33 +283,22 @@ describe('platform/gitea/gitea-helper', () => {
 
   describe('createPR', () => {
     it('should call /api/v1/repos/[repo]/pulls endpoint', async () => {
-      mockAPI<ght.PR, Required<ght.PRCreateParams>>(
-        {
-          method: 'post',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls`,
-          postParams: {
-            state: mockPR.state,
-            title: mockPR.title,
-            body: mockPR.body,
-            base: mockPR.base.ref,
-            head: mockPR.head.ref,
-            assignees: [mockUser.username],
-            labels: [mockLabel.id],
-          },
-        },
-        mockPR
-      );
+      httpMock
+        .scope(baseUrl)
+        .post(`/repos/${mockRepo.full_name}/pulls`)
+        .reply(200, mockPR);
 
-      const res = await helper.createPR(mockRepo.full_name, {
+      const res = await ght.createPR(mockRepo.full_name, {
         state: mockPR.state,
         title: mockPR.title,
         body: mockPR.body,
         base: mockPR.base.ref,
-        head: mockPR.head.ref,
+        head: mockPR.head.label,
         assignees: [mockUser.username],
         labels: [mockLabel.id],
       });
       expect(res).toEqual(mockPR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
@@ -385,141 +306,115 @@ describe('platform/gitea/gitea-helper', () => {
     it('should call /api/v1/repos/[repo]/pulls/[pull] endpoint', async () => {
       const updatedMockPR: ght.PR = {
         ...mockPR,
-        state: 'closed',
+        state: PrState.Closed,
         title: 'new-title',
         body: 'new-body',
       };
 
-      mockAPI<ght.PR, Required<ght.PRUpdateParams>>(
-        {
-          method: 'patch',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls/${mockPR.number}`,
-          postParams: {
-            state: 'closed',
-            title: 'new-title',
-            body: 'new-body',
-            assignees: [otherMockUser.username],
-            labels: [otherMockLabel.id],
-          },
-        },
-        updatedMockPR
-      );
+      httpMock
+        .scope(baseUrl)
+        .patch(`/repos/${mockRepo.full_name}/pulls/${mockPR.number}`)
+        .reply(200, updatedMockPR);
 
-      const res = await helper.updatePR(mockRepo.full_name, mockPR.number, {
-        state: PR_STATE_CLOSED,
+      const res = await ght.updatePR(mockRepo.full_name, mockPR.number, {
+        state: PrState.Closed,
         title: 'new-title',
         body: 'new-body',
         assignees: [otherMockUser.username],
         labels: [otherMockLabel.id],
       });
       expect(res).toEqual(updatedMockPR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('closePR', () => {
     it('should call /api/v1/repos/[repo]/pulls/[pull] endpoint', async () => {
-      mockAPI<undefined, ght.PRUpdateParams>({
-        method: 'patch',
-        urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls/${mockPR.number}`,
-        postParams: {
-          state: 'closed',
-        },
-      });
+      httpMock
+        .scope(baseUrl)
+        .patch(`/repos/${mockRepo.full_name}/pulls/${mockPR.number}`)
+        .reply(200);
 
-      const res = await helper.closePR(mockRepo.full_name, mockPR.number);
+      const res = await ght.closePR(mockRepo.full_name, mockPR.number);
       expect(res).toBeUndefined();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('mergePR', () => {
     it('should call /api/v1/repos/[repo]/pulls/[pull]/merge endpoint', async () => {
-      mockAPI<undefined, ght.PRMergeParams>({
-        method: 'patch',
-        urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls/${mockPR.number}/merge`,
-        postParams: {
-          Do: 'rebase',
-        },
-      });
+      httpMock
+        .scope(baseUrl)
+        .post(`/repos/${mockRepo.full_name}/pulls/${mockPR.number}/merge`)
+        .reply(200);
 
-      const res = await helper.mergePR(
+      const res = await ght.mergePR(
         mockRepo.full_name,
         mockPR.number,
         'rebase'
       );
       expect(res).toBeUndefined();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('getPR', () => {
     it('should call /api/v1/repos/[repo]/pulls/[pull] endpoint', async () => {
-      mockAPI<ght.PR>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls/${mockPR.number}`,
-        },
-        mockPR
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/pulls/${mockPR.number}`)
+        .reply(200, mockPR);
 
-      const res = await helper.getPR(mockRepo.full_name, mockPR.number);
+      const res = await ght.getPR(mockRepo.full_name, mockPR.number);
       expect(res).toEqual(mockPR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('searchPRs', () => {
     it('should call /api/v1/repos/[repo]/pulls endpoint', async () => {
-      mockAPI<ght.PR[]>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls`,
-        },
-        [mockPR]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/pulls`)
+        .reply(200, [mockPR]);
 
-      const res = await helper.searchPRs(mockRepo.full_name, {});
+      const res = await ght.searchPRs(mockRepo.full_name, {});
       expect(res).toEqual([mockPR]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should construct proper query parameters', async () => {
-      mockAPI<ght.PR[], Required<PRSearchParams>>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/pulls`,
-          queryParams: {
-            state: ['open'],
-            labels: [`${mockLabel.id}`, `${otherMockLabel.id}`],
-          },
-        },
-        [mockPR]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(
+          `/repos/${mockRepo.full_name}/pulls?state=open&labels=${mockLabel.id}&labels=${otherMockLabel.id}`
+        )
+        .reply(200, [mockPR]);
 
-      const res = await helper.searchPRs(mockRepo.full_name, {
-        state: 'open',
+      const res = await ght.searchPRs(mockRepo.full_name, {
+        state: PrState.Open,
         labels: [mockLabel.id, otherMockLabel.id],
       });
       expect(res).toEqual([mockPR]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('createIssue', () => {
     it('should call /api/v1/repos/[repo]/issues endpoint', async () => {
-      mockAPI<ght.Issue, Required<ght.IssueCreateParams>>(
-        {
-          method: 'post',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues`,
-          postParams: {
-            state: mockIssue.state,
-            title: mockIssue.title,
-            body: mockIssue.body,
-            assignees: [mockUser.username],
-          },
-        },
-        mockIssue
-      );
+      httpMock
+        .scope(baseUrl)
+        .post(`/repos/${mockRepo.full_name}/issues`)
+        .reply(200, mockIssue);
 
-      const res = await helper.createIssue(mockRepo.full_name, {
+      const res = await ght.createIssue(mockRepo.full_name, {
         state: mockIssue.state,
         title: mockIssue.title,
         body: mockIssue.body,
         assignees: [mockUser.username],
       });
       expect(res).toEqual(mockIssue);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
@@ -533,129 +428,122 @@ describe('platform/gitea/gitea-helper', () => {
         assignees: [otherMockUser],
       };
 
-      mockAPI<ght.Issue, Required<ght.IssueUpdateParams>>(
-        {
-          method: 'patch',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/${mockIssue.number}`,
-          postParams: {
-            state: 'closed',
-            title: 'new-title',
-            body: 'new-body',
-            assignees: [otherMockUser.username],
-          },
-        },
-        updatedMockIssue
-      );
+      httpMock
+        .scope(baseUrl)
+        .patch(`/repos/${mockRepo.full_name}/issues/${mockIssue.number}`)
+        .reply(200, updatedMockIssue);
 
-      const res = await helper.updateIssue(
-        mockRepo.full_name,
-        mockIssue.number,
-        {
-          state: 'closed',
-          title: 'new-title',
-          body: 'new-body',
-          assignees: [otherMockUser.username],
-        }
-      );
+      const res = await ght.updateIssue(mockRepo.full_name, mockIssue.number, {
+        state: 'closed',
+        title: 'new-title',
+        body: 'new-body',
+        assignees: [otherMockUser.username],
+      });
       expect(res).toEqual(updatedMockIssue);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('closeIssue', () => {
     it('should call /api/v1/repos/[repo]/issues/[issue] endpoint', async () => {
-      mockAPI<ght.IssueUpdateParams>({
-        method: 'patch',
-        urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/${mockIssue.number}`,
-        postParams: {
-          state: 'closed',
-        },
-      });
+      httpMock
+        .scope(baseUrl)
+        .patch(`/repos/${mockRepo.full_name}/issues/${mockIssue.number}`)
+        .reply(200);
 
-      const res = await helper.closeIssue(mockRepo.full_name, mockIssue.number);
+      const res = await ght.closeIssue(mockRepo.full_name, mockIssue.number);
       expect(res).toBeUndefined();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('searchIssues', () => {
     it('should call /api/v1/repos/[repo]/issues endpoint', async () => {
-      mockAPI<ght.Issue[]>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues`,
-        },
-        [mockIssue]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/issues?type=issues`)
+        .reply(200, [mockIssue]);
 
-      const res = await helper.searchIssues(mockRepo.full_name, {});
+      const res = await ght.searchIssues(mockRepo.full_name, {});
       expect(res).toEqual([mockIssue]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should construct proper query parameters', async () => {
-      mockAPI<ght.Issue[], Required<PRSearchParams>>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues`,
-          queryParams: {
-            state: ['open'],
-          },
-        },
-        [mockIssue]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/issues?state=open&type=issues`)
+        .reply(200, [mockIssue]);
 
-      const res = await helper.searchIssues(mockRepo.full_name, {
+      const res = await ght.searchIssues(mockRepo.full_name, {
         state: 'open',
       });
       expect(res).toEqual([mockIssue]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('getRepoLabels', () => {
     it('should call /api/v1/repos/[repo]/labels endpoint', async () => {
-      mockAPI<ght.Label[]>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/labels`,
-        },
-        [mockLabel, otherMockLabel]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/labels`)
+        .reply(200, [mockLabel, otherMockLabel]);
 
-      const res = await helper.getRepoLabels(mockRepo.full_name);
+      const res = await ght.getRepoLabels(mockRepo.full_name);
       expect(res).toEqual([mockLabel, otherMockLabel]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
+    });
+  });
+
+  describe('getOrgLabels', () => {
+    it('should call /api/v1/orgs/[org]/labels endpoint', async () => {
+      httpMock
+        .scope(baseUrl)
+        .get(`/orgs/${mockRepo.owner.username}/labels`)
+        .reply(200, [mockLabel, otherMockLabel]);
+
+      const res = await ght.getOrgLabels(mockRepo.owner.username);
+      expect(res).toEqual([mockLabel, otherMockLabel]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('unassignLabel', () => {
     it('should call /api/v1/repos/[repo]/issues/[issue]/labels/[label] endpoint', async () => {
-      mockAPI({
-        method: 'delete',
-        urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/${mockIssue.number}/labels/${mockLabel.id}`,
-      });
+      httpMock
+        .scope(baseUrl)
+        .delete(
+          `/repos/${mockRepo.full_name}/issues/${mockIssue.number}/labels/${mockLabel.id}`
+        )
+        .reply(200);
 
-      const res = await helper.unassignLabel(
+      const res = await ght.unassignLabel(
         mockRepo.full_name,
         mockIssue.number,
         mockLabel.id
       );
       expect(res).toBeUndefined();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('createComment', () => {
     it('should call /api/v1/repos/[repo]/issues/[issue]/comments endpoint', async () => {
-      mockAPI<ght.Comment, Required<ght.CommentCreateParams>>(
-        {
-          method: 'post',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/${mockIssue.number}/comments`,
-          postParams: {
-            body: mockComment.body,
-          },
-        },
-        mockComment
-      );
+      httpMock
+        .scope(baseUrl)
+        .post(
+          `/repos/${mockRepo.full_name}/issues/${mockIssue.number}/comments`
+        )
+        .reply(200, mockComment);
 
-      const res = await helper.createComment(
+      const res = await ght.createComment(
         mockRepo.full_name,
         mockIssue.number,
         mockComment.body
       );
       expect(res).toEqual(mockComment);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
@@ -666,75 +554,57 @@ describe('platform/gitea/gitea-helper', () => {
         body: 'new-body',
       };
 
-      mockAPI<ght.Comment, Required<ght.CommentUpdateParams>>(
-        {
-          method: 'patch',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/comments/${mockComment.id}`,
-          postParams: {
-            body: 'new-body',
-          },
-        },
-        updatedMockComment
-      );
+      httpMock
+        .scope(baseUrl)
+        .patch(`/repos/${mockRepo.full_name}/issues/comments/${mockComment.id}`)
+        .reply(200, updatedMockComment);
 
-      const res = await helper.updateComment(
+      const res = await ght.updateComment(
         mockRepo.full_name,
         mockComment.id,
         'new-body'
       );
       expect(res).toEqual(updatedMockComment);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('deleteComment', () => {
     it('should call /api/v1/repos/[repo]/issues/comments/[comment] endpoint', async () => {
-      mockAPI({
-        method: 'delete',
-        urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/comments/${mockComment.id}`,
-      });
+      httpMock
+        .scope(baseUrl)
+        .delete(
+          `/repos/${mockRepo.full_name}/issues/comments/${mockComment.id}`
+        )
+        .reply(200);
 
-      const res = await helper.deleteComment(
-        mockRepo.full_name,
-        mockComment.id
-      );
+      const res = await ght.deleteComment(mockRepo.full_name, mockComment.id);
       expect(res).toBeUndefined();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('getComments', () => {
     it('should call /api/v1/repos/[repo]/issues/[issue]/comments endpoint', async () => {
-      mockAPI<ght.Comment[]>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/issues/${mockIssue.number}/comments`,
-        },
-        [mockComment]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/issues/${mockIssue.number}/comments`)
+        .reply(200, [mockComment]);
 
-      const res = await helper.getComments(
-        mockRepo.full_name,
-        mockIssue.number
-      );
+      const res = await ght.getComments(mockRepo.full_name, mockIssue.number);
       expect(res).toEqual([mockComment]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('createCommitStatus', () => {
     it('should call /api/v1/repos/[repo]/statuses/[commit] endpoint', async () => {
-      mockAPI<ght.CommitStatus, Required<ght.CommitStatusCreateParams>>(
-        {
-          method: 'post',
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/statuses/${mockCommitHash}`,
-          postParams: {
-            state: mockCommitStatus.status,
-            context: mockCommitStatus.context,
-            description: mockCommitStatus.description,
-            target_url: mockCommitStatus.target_url,
-          },
-        },
-        mockCommitStatus
-      );
+      httpMock
+        .scope(baseUrl)
+        .post(`/repos/${mockRepo.full_name}/statuses/${mockCommitHash}`)
+        .reply(200, mockCommitStatus);
 
-      const res = await helper.createCommitStatus(
+      const res = await ght.createCommitStatus(
         mockRepo.full_name,
         mockCommitHash,
         {
@@ -745,89 +615,118 @@ describe('platform/gitea/gitea-helper', () => {
         }
       );
       expect(res).toEqual(mockCommitStatus);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 
   describe('getCombinedCommitStatus', () => {
     it('should call /api/v1/repos/[repo]/commits/[branch]/statuses endpoint', async () => {
-      mockAPI<ght.CommitStatus[]>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/commits/${mockBranch.name}/statuses`,
-        },
-        [mockCommitStatus, otherMockCommitStatus]
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/commits/${mockBranch.name}/statuses`)
+        .reply(200, [mockCommitStatus, otherMockCommitStatus]);
 
-      const res = await helper.getCombinedCommitStatus(
+      const res = await ght.getCombinedCommitStatus(
         mockRepo.full_name,
         mockBranch.name
       );
       expect(res.worstStatus).not.toEqual('unknown');
       expect(res.statuses).toEqual([mockCommitStatus, otherMockCommitStatus]);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should properly determine worst commit status', async () => {
-      const statuses: ght.CommitStatusType[] = [
-        'unknown',
-        'success',
-        'pending',
-        'warning',
-        'failure',
-        'error',
+      const statuses: {
+        status: ght.CommitStatusType;
+        created_at: string;
+        expected: ght.CommitStatusType;
+      }[] = [
+        {
+          status: 'unknown',
+          created_at: '2020-03-25T01:00:00Z',
+          expected: 'unknown',
+        },
+        {
+          status: 'pending',
+          created_at: '2020-03-25T03:00:00Z',
+          expected: 'pending',
+        },
+        {
+          status: 'warning',
+          created_at: '2020-03-25T04:00:00Z',
+          expected: 'warning',
+        },
+        {
+          status: 'failure',
+          created_at: '2020-03-25T05:00:00Z',
+          expected: 'failure',
+        },
+        {
+          status: 'success',
+          created_at: '2020-03-25T02:00:00Z',
+          expected: 'failure',
+        },
+        {
+          status: 'success',
+          created_at: '2020-03-25T06:00:00Z',
+          expected: 'success',
+        },
       ];
 
       const commitStatuses: ght.CommitStatus[] = [
         { ...mockCommitStatus, status: 'unknown' },
       ];
 
-      for (const status of statuses) {
+      for (const statusElem of statuses) {
+        const { status, expected } = statusElem;
         // Add current status ot list of commit statuses, then mock the API to return the whole list
-        commitStatuses.push({ ...mockCommitStatus, status });
-        mockAPI<ght.CommitStatus[]>(
-          {
-            urlPattern: `/api/v1/repos/${mockRepo.full_name}/commits/${mockBranch.name}/statuses`,
-          },
-          commitStatuses
-        );
+        commitStatuses.push({
+          ...mockCommitStatus,
+          status,
+          created_at: statusElem.created_at,
+        });
+        httpMock
+          .scope(baseUrl)
+          .get(
+            `/repos/${mockRepo.full_name}/commits/${mockBranch.name}/statuses`
+          )
+          .reply(200, commitStatuses);
 
         // Expect to get the current state back as the worst status, as all previous commit statuses
         // should be less important than the one which just got added
-        const res = await helper.getCombinedCommitStatus(
+        const res = await ght.getCombinedCommitStatus(
           mockRepo.full_name,
           mockBranch.name
         );
-        expect(res.worstStatus).toEqual(status);
+        expect(res.worstStatus).toEqual(expected);
+        expect(httpMock.getTrace()).toMatchSnapshot();
       }
     });
   });
 
   describe('getBranch', () => {
     it('should call /api/v1/repos/[repo]/branches/[branch] endpoint', async () => {
-      mockAPI<ght.Branch>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/branches/${mockBranch.name}`,
-        },
-        mockBranch
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/branches/${mockBranch.name}`)
+        .reply(200, mockBranch);
 
-      const res = await helper.getBranch(mockRepo.full_name, mockBranch.name);
+      const res = await ght.getBranch(mockRepo.full_name, mockBranch.name);
       expect(res).toEqual(mockBranch);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
 
     it('should properly escape branch names', async () => {
       const escapedBranchName = encodeURIComponent(otherMockBranch.name);
 
-      mockAPI<ght.Branch>(
-        {
-          urlPattern: `/api/v1/repos/${mockRepo.full_name}/branches/${escapedBranchName}`,
-        },
-        otherMockBranch
-      );
+      httpMock
+        .scope(baseUrl)
+        .get(`/repos/${mockRepo.full_name}/branches/${escapedBranchName}`)
+        .reply(200, otherMockBranch);
 
-      const res = await helper.getBranch(
-        mockRepo.full_name,
-        otherMockBranch.name
-      );
+      const res = await ght.getBranch(mockRepo.full_name, otherMockBranch.name);
       expect(res).toEqual(otherMockBranch);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 });

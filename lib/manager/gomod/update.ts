@@ -8,10 +8,7 @@ export function updateDependency({
   try {
     logger.debug(`gomod.updateDependency: ${upgrade.newValue}`);
     const { depName, depType } = upgrade;
-    let depNameNoVersion = depName
-      .split('/')
-      .slice(0, 3)
-      .join('/');
+    let depNameNoVersion = depName.split('/').slice(0, 3).join('/');
     if (depNameNoVersion.startsWith('gopkg.in')) {
       depNameNoVersion = depNameNoVersion.replace(/\.v\d+$/, '');
     }
@@ -78,7 +75,7 @@ export function updateDependency({
         !newLine.includes(`/v${upgrade.newMajor}`)
       ) {
         // If package has no version, pin to latest one.
-        newLine = newLine.replace(depName, depName + '/v' + upgrade.newMajor);
+        newLine = newLine.replace(depName, `${depName}/v${upgrade.newMajor}`);
         if (/^v(0|1)\./.test(upgrade.currentValue)) {
           // Add version
           newLine = newLine.replace(

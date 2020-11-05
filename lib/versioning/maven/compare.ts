@@ -113,11 +113,11 @@ const zeroToken: NumberToken = {
   isTransition: false,
 };
 
-function tokenize(versionStr: string): Token[] {
+function tokenize(versionStr: string, preserveMinorZeroes = false): Token[] {
   let buf: Token[] = [];
   let result: Token[] = [];
   let leadingZero = true;
-  iterateTokens(versionStr.toLowerCase().replace(/^v/i, ''), token => {
+  iterateTokens(versionStr.toLowerCase().replace(/^v/i, ''), (token) => {
     if (token.prefix === PREFIX_HYPHEN) {
       buf = [];
     }
@@ -126,7 +126,7 @@ function tokenize(versionStr: string): Token[] {
       leadingZero = false;
       result = result.concat(buf);
       buf = [];
-    } else if (leadingZero) {
+    } else if (leadingZero || preserveMinorZeroes) {
       result = result.concat(buf);
       buf = [];
     }
@@ -185,7 +185,7 @@ export function qualifierType(token: Token): number {
   if (val === 'rc' || val === 'cr') {
     return QualifierTypes.RC;
   }
-  if (val === 'snapshot') {
+  if (val === 'snapshot' || val === 'snap') {
     return QualifierTypes.Snapshot;
   }
   if (
@@ -308,7 +308,7 @@ function parseRange(rangeStr: string): any {
   let result: Range[] = [];
   let interval = emptyInterval();
 
-  commaSplit.forEach(subStr => {
+  commaSplit.forEach((subStr) => {
     if (!result) {
       return;
     }
@@ -432,7 +432,7 @@ function rangeToStr(fullRange: Range[]): string | null {
     }
   }
 
-  const intervals = fullRange.map(val =>
+  const intervals = fullRange.map((val) =>
     [
       val.leftBracket,
       valToStr(val.leftValue),
@@ -442,6 +442,36 @@ function rangeToStr(fullRange: Range[]): string | null {
     ].join('')
   );
   return intervals.join(',');
+}
+
+function tokensToStr(tokens: Token[]): string {
+  return tokens.reduce((result, token, idx) => {
+    const prefix = token.prefix === PREFIX_DOT ? '.' : '-';
+    return `${result}${idx !== 0 && token.val !== '' ? prefix : ''}${
+      token.val
+    }`;
+  }, '');
+}
+
+function coerceRangeValue(prev: string, next: string): string {
+  const prevTokens = tokenize(prev, true);
+  const nextTokens = tokenize(next, true);
+  const resultTokens = nextTokens.slice(0, prevTokens.length);
+  const align = Math.max(0, prevTokens.length - nextTokens.length);
+  if (align > 0) {
+    resultTokens.push(...prevTokens.slice(prevTokens.length - align));
+  }
+  return tokensToStr(resultTokens);
+}
+
+function incrementRangeValue(value: string): string {
+  const tokens = tokenize(value);
+  const lastToken = tokens[tokens.length - 1];
+  if (typeof lastToken.val === 'number') {
+    lastToken.val += 1;
+    return coerceRangeValue(value, tokensToStr(tokens));
+  }
+  return value;
 }
 
 function autoExtendMavenRange(
@@ -482,11 +512,42 @@ function autoExtendMavenRange(
       return currentRepresentation;
     }
   }
+
   const interval = range[nearestIntervalIdx];
-  if (interval.rightValue !== null) {
-    interval.rightValue = newValue;
-  } else {
-    interval.leftValue = newValue;
+  const { leftValue, rightValue } = interval;
+  if (
+    leftValue !== null &&
+    rightValue !== null &&
+    incrementRangeValue(leftValue) === rightValue
+  ) {
+    if (compare(newValue, leftValue) !== -1) {
+      interval.leftValue = coerceRangeValue(leftValue, newValue);
+      interval.rightValue = incrementRangeValue(interval.leftValue);
+    }
+  } else if (rightValue !== null) {
+    if (interval.rightType === INCLUDING_POINT) {
+      const tokens = tokenize(rightValue);
+      const lastToken = tokens[tokens.length - 1];
+      if (typeof lastToken.val === 'number') {
+        interval.rightValue = coerceRangeValue(rightValue, newValue);
+      } else {
+        interval.rightValue = newValue;
+      }
+    } else {
+      interval.rightValue = incrementRangeValue(
+        coerceRangeValue(rightValue, newValue)
+      );
+    }
+  } else if (leftValue !== null) {
+    interval.leftValue = coerceRangeValue(leftValue, newValue);
+  }
+
+  if (interval.leftValue && interval.rightValue) {
+    const correctRepresentation =
+      compare(interval.leftValue, interval.rightValue) !== 1
+        ? rangeToStr(range)
+        : null;
+    return correctRepresentation || currentRepresentation;
   }
   return rangeToStr(range);
 }

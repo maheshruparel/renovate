@@ -22,14 +22,16 @@ export interface ChangeLogRelease {
 
 export interface ChangeLogProject {
   depName?: string;
-  github: string;
-  githubApiBaseURL?: string;
-  githubBaseURL: string;
+  github?: string;
+  gitlab?: string;
+  apiBaseUrl?: string;
+  baseUrl: string;
   repository: string;
 }
 
 export enum ChangeLogError {
   MissingGithubToken = 1,
+  MissingGitlabToken = 2,
 }
 
 export interface ChangeLogResult {
@@ -37,4 +39,9 @@ export interface ChangeLogResult {
   project?: ChangeLogProject;
   versions?: ChangeLogRelease[];
   error?: ChangeLogError;
+}
+
+export interface ChangeLogFile {
+  changelogFile: string;
+  changelogMd: string;
 }

@@ -1,11 +1,10 @@
 import is from '@sindresorhus/is';
-import upath from 'upath';
 import yaml from 'js-yaml';
-import { SkipReason } from '../../types';
-import { logger } from '../../logger';
-import { PackageFile, PackageDependency, ExtractConfig } from '../common';
-import { platform } from '../../platform';
 import * as datasourceHelm from '../../datasource/helm';
+import { logger } from '../../logger';
+import { SkipReason } from '../../types';
+import { getSiblingFileName, readLocalFile } from '../../util/fs';
+import { ExtractConfig, PackageDependency, PackageFile } from '../common';
 
 export async function extractPackageFile(
   content: string,
@@ -13,15 +12,15 @@ export async function extractPackageFile(
   config: ExtractConfig
 ): Promise<PackageFile> {
   try {
-    const baseDir = upath.parse(fileName).dir;
-    const chartFileName = upath.join(baseDir, 'Chart.yaml');
-    const chartContents = await platform.getFile(chartFileName);
+    const chartFileName = getSiblingFileName(fileName, 'Chart.yaml');
+    const chartContents = await readLocalFile(chartFileName, 'utf8');
     if (!chartContents) {
       logger.debug({ fileName }, 'Failed to find helm Chart.yaml');
       return null;
     }
-    const chart = yaml.safeLoad(chartContents, { json: true });
-    if (!(chart && chart.apiVersion && chart.name && chart.version)) {
+    // TODO: fix me
+    const chart = yaml.safeLoad(chartContents, { json: true }) as any;
+    if (!(chart?.apiVersion && chart.name && chart.version)) {
       logger.debug(
         { fileName },
         'Failed to find required fields in Chart.yaml'
@@ -44,7 +43,7 @@ export async function extractPackageFile(
     logger.debug({ fileName }, 'requirements.yaml has no dependencies');
     return null;
   }
-  deps = doc.dependencies.map(dep => {
+  deps = doc.dependencies.map((dep) => {
     const res: PackageDependency = {
       depName: dep.name,
       currentValue: dep.version,

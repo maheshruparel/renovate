@@ -1,8 +1,8 @@
-import { logger } from '../../logger';
-import { getDep } from '../dockerfile/extract';
-import { PackageFile, PackageDependency } from '../common';
-import * as npmVersioning from '../../versioning/npm';
 import * as datasourceOrb from '../../datasource/orb';
+import { logger } from '../../logger';
+import * as npmVersioning from '../../versioning/npm';
+import { PackageDependency, PackageFile } from '../common';
+import { getDep } from '../dockerfile/extract';
 
 export function extractPackageFile(content: string): PackageFile | null {
   const deps: PackageDependency[] = [];
@@ -29,7 +29,6 @@ export function extractPackageFile(content: string): PackageFile | null {
               depType: 'orb',
               depName,
               currentValue,
-              managerData: { lineNumber },
               datasource: datasourceOrb.id,
               lookupName: orbName,
               commitMessageTopic: '{{{depName}}} orb',
@@ -40,7 +39,7 @@ export function extractPackageFile(content: string): PackageFile | null {
           }
         } while (foundOrb);
       }
-      const match = /^\s*- image:\s*'?"?([^\s'"]+)'?"?\s*$/.exec(line);
+      const match = /^\s*-? image:\s*'?"?([^\s'"]+)'?"?\s*$/.exec(line);
       if (match) {
         const currentFrom = match[1];
         const dep = getDep(currentFrom);
@@ -53,7 +52,7 @@ export function extractPackageFile(content: string): PackageFile | null {
           'CircleCI docker image'
         );
         dep.depType = 'docker';
-        dep.managerData = { lineNumber };
+        dep.versioning = 'docker';
         deps.push(dep);
       }
     }

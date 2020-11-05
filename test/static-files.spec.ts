@@ -5,8 +5,8 @@ const glob = util.promisify(require('glob'));
 const ignoredExtensions = ['js', 'ts', 'md', 'pyc', 'DS_Store', 'map', 'snap'];
 
 function filterFiles(files: string[]): string[] {
-  return files.filter(file =>
-    ignoredExtensions.every(extension => !file.endsWith(`.${extension}`))
+  return files.filter((file) =>
+    ignoredExtensions.every((extension) => !file.endsWith(`.${extension}`))
   );
 }
 
@@ -21,6 +21,9 @@ async function getFiles(dir: string): Promise<string[]> {
 }
 
 describe('static-files', () => {
+  // workaround for github macos
+  jest.setTimeout(10 * 1000);
+
   it('has same static files in lib and dist', async () => {
     expect(await getFiles('dist')).toEqual(await getFiles('lib'));
   });

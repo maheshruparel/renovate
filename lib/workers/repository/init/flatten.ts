@@ -1,15 +1,15 @@
+import { PackageRule, mergeChildConfig } from '../../../config';
 import { logger } from '../../../logger';
-import { mergeChildConfig, PackageRule } from '../../../config';
 
 export function flattenPackageRules(
   packageRules: PackageRule[]
 ): PackageRule[] {
   const res: PackageRule[] = [];
-  if (!(packageRules && packageRules.length)) {
+  if (!packageRules?.length) {
     return res;
   }
   for (const rule of packageRules) {
-    if (rule.packageRules && rule.packageRules.length) {
+    if (rule.packageRules?.length) {
       logger.debug('Flattening nested packageRules');
       for (const subrule of rule.packageRules) {
         const combinedRule = mergeChildConfig(rule, subrule);

@@ -1,15 +1,10 @@
-import { extractPackageFile } from './extract';
-import { updateDependency } from './update';
 import { LANGUAGE_DOCKER } from '../../constants/languages';
+import { extractPackageFile } from './extract';
 
 const language = LANGUAGE_DOCKER;
 
-export { extractPackageFile, language, updateDependency };
+export { extractPackageFile, language };
 
 export const defaultConfig = {
-  fileMatch: [
-    '^\\.github/main.workflow$',
-    '^\\.github/workflows/[^/]+\\.ya?ml$',
-  ],
-  pinDigests: true,
+  fileMatch: ['^\\.github/workflows/[^/]+\\.ya?ml$'],
 };

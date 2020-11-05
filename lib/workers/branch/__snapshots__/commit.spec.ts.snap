@@ -11,8 +11,8 @@ Array [
           "name": "package.json",
         },
       ],
+      "force": false,
       "message": "some commit message",
-      "parentBranch": undefined,
     },
   ],
 ]

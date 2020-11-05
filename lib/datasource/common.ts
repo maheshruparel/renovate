@@ -1,33 +1,53 @@
-import { DATASOURCE_FAILURE } from '../constants/error-messages';
-
-export interface GetReleasesConfig {
-  lookupName: string;
-  registryUrls?: string[];
-  compatibility?: Record<string, string>;
-  npmrc?: string;
-}
-
 export interface Config {
   datasource?: string;
   depName?: string;
   lookupName?: string;
   registryUrls?: string[];
 }
-export interface PkgReleaseConfig extends Config {
-  compatibility?: Record<string, string>;
-  npmrc?: string;
-  versioning?: string;
+
+export interface DigestConfig extends Config {
+  registryUrl?: string;
 }
 
-export type DigestConfig = Config;
+interface ReleasesConfigBase {
+  constraints?: Record<string, string>;
+  npmrc?: string;
+  registryUrls?: string[];
+}
+
+export interface GetReleasesConfig extends ReleasesConfigBase {
+  lookupName: string;
+  registryUrl?: string;
+}
+
+export interface GetPkgReleasesConfig extends ReleasesConfigBase {
+  datasource: string;
+  depName: string;
+  lookupName?: string;
+  versioning?: string;
+  extractVersion?: string;
+}
+
+export function isGetPkgReleasesConfig(
+  input: unknown
+): input is GetPkgReleasesConfig {
+  return (
+    (input as GetPkgReleasesConfig).datasource !== undefined &&
+    (input as GetPkgReleasesConfig).depName !== undefined
+  );
+}
 
 export interface Release {
+  canBeUnpublished?: boolean;
   changelogUrl?: string;
+  checksumUrl?: string;
+  downloadUrl?: string;
   gitRef?: string;
   isDeprecated?: boolean;
-
+  isStable?: boolean;
   releaseTimestamp?: any;
   version: string;
+  newDigest?: string;
 }
 
 export interface ReleaseResult {
@@ -45,27 +65,20 @@ export interface ReleaseResult {
   pkgName?: string;
   releases: Release[];
   sourceUrl?: string;
-  tags?: string[];
+  tags?: Record<string, string>;
   versions?: any;
+  registryUrl?: string;
 }
 
-export interface Datasource {
+export interface DatasourceApi {
   id: string;
   getDigest?(config: DigestConfig, newValue?: string): Promise<string | null>;
-  getPkgReleases(config: PkgReleaseConfig): Promise<ReleaseResult | null>;
+  getReleases(config: GetReleasesConfig): Promise<ReleaseResult | null>;
+  defaultRegistryUrls?: string[];
+  appendRegistryUrls?: string[];
+  defaultConfig?: Record<string, unknown>;
+  registryStrategy?: 'first' | 'hunt' | 'merge';
 }
 
-export class DatasourceError extends Error {
-  err: Error;
-
-  datasource?: string;
-
-  lookupName?: string;
-
-  constructor(err: Error) {
-    super(DATASOURCE_FAILURE);
-    // Set the prototype explicitly: https://github.com/Microsoft/TypeScript/wiki/Breaking-Changes#extending-built-ins-like-error-array-and-map-may-no-longer-work
-    Object.setPrototypeOf(this, DatasourceError.prototype);
-    this.err = err;
-  }
-}
+// TODO: remove, only for compatibility
+export type Datasource = DatasourceApi;

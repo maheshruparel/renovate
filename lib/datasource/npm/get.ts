@@ -1,19 +1,23 @@
-import delay from 'delay';
-import moment from 'moment';
-import url from 'url';
-import getRegistryUrl from 'registry-auth-token/registry-url';
-import registryAuthToken from 'registry-auth-token';
-import isBase64 from 'validator/lib/isBase64';
 import { OutgoingHttpHeaders } from 'http';
+import url from 'url';
 import is from '@sindresorhus/is';
+import delay from 'delay';
+import { DateTime } from 'luxon';
+import registryAuthToken from 'registry-auth-token';
+import getRegistryUrl from 'registry-auth-token/registry-url';
 import { logger } from '../../logger';
-import got, { GotJSONOptions } from '../../util/got';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import * as packageCache from '../../util/cache/package';
+import { find } from '../../util/host-rules';
+import { Http, HttpOptions } from '../../util/http';
 import { maskToken } from '../../util/mask';
-import { getNpmrc } from './npmrc';
-import { DatasourceError, Release, ReleaseResult } from '../common';
+import { Release, ReleaseResult } from '../common';
 import { id } from './common';
+import { getNpmrc } from './npmrc';
 
-let memcache = {};
+const http = new Http(id);
+
+let memcache: Record<string, string> = {};
 
 export function resetMemCache(): void {
   logger.debug('resetMemCache()');
@@ -36,9 +40,32 @@ export interface NpmDependency extends ReleaseResult {
   latestVersion: string;
   sourceUrl: string;
   versions: Record<string, any>;
-  'dist-tags': string[];
+  'dist-tags': Record<string, string>;
   'renovate-config': any;
   sourceDirectory?: string;
+}
+
+interface NpmResponse {
+  _id: string;
+  name?: string;
+  versions?: Record<
+    string,
+    {
+      repository?: {
+        url: string;
+        directory: string;
+      };
+      homepage?: string;
+      deprecated?: boolean;
+      gitHead?: string;
+    }
+  >;
+  repository?: {
+    url?: string;
+    directory?: string;
+  };
+  homepage?: string;
+  time?: Record<string, string>;
 }
 
 export async function getDependency(
@@ -50,7 +77,7 @@ export async function getDependency(
   // This is our datastore cache and is cleared at the end of each repo, i.e. we never requery/revalidate during a "run"
   if (memcache[packageName]) {
     logger.trace('Returning cached result');
-    return JSON.parse(memcache[packageName]);
+    return JSON.parse(memcache[packageName]) as NpmDependency;
   }
 
   const scope = packageName.split('/')[0];
@@ -67,7 +94,7 @@ export async function getDependency(
   );
   // Now check the persistent cache
   const cacheNamespace = 'datasource-npm';
-  const cachedResult = await renovateCache.get<NpmDependency>(
+  const cachedResult = await packageCache.get<NpmDependency>(
     cacheNamespace,
     pkgUrl
   );
@@ -75,22 +102,42 @@ export async function getDependency(
   if (cachedResult) {
     return cachedResult;
   }
-  const authInfo = registryAuthToken(regUrl, { npmrc });
   const headers: OutgoingHttpHeaders = {};
+  let authInfo = registryAuthToken(regUrl, { npmrc, recursive: true });
 
-  if (authInfo && authInfo.type && authInfo.token) {
-    // istanbul ignore if
-    if (npmrc && npmrc.massagedAuth && isBase64(authInfo.token)) {
-      logger.debug('Massaging authorization type to Basic');
-      authInfo.type = 'Basic';
-    }
+  if (
+    !authInfo &&
+    npmrc &&
+    npmrc._authToken &&
+    regUrl.replace(/\/?$/, '/') === npmrc.registry?.replace(/\/?$/, '/')
+  ) {
+    authInfo = { type: 'Bearer', token: npmrc._authToken };
+  }
+
+  if (authInfo?.type && authInfo.token) {
     headers.authorization = `${authInfo.type} ${authInfo.token}`;
     logger.trace(
       { token: maskToken(authInfo.token), npmName: packageName },
-      'Using auth for npm lookup'
+      'Using auth (via npmrc) for npm lookup'
     );
   } else if (process.env.NPM_TOKEN && process.env.NPM_TOKEN !== 'undefined') {
+    logger.trace(
+      { token: maskToken(process.env.NPM_TOKEN), npmName: packageName },
+      'Using auth (via process.env.NPM_TOKEN) for npm lookup'
+    );
     headers.authorization = `Bearer ${process.env.NPM_TOKEN}`;
+  } else {
+    const opts = find({
+      hostType: 'npm',
+      url: regUrl,
+    });
+    if (opts.token) {
+      logger.trace(
+        { token: maskToken(opts.token), npmName: packageName },
+        'Using auth (via hostRules) for npm lookup'
+      );
+      headers.authorization = `Bearer ${opts.token}`;
+    }
   }
 
   const uri = url.parse(pkgUrl);
@@ -107,15 +154,11 @@ export async function getDependency(
 
   try {
     const useCache = retries === 3; // Disable cache if we're retrying
-    const opts: GotJSONOptions = {
-      hostType: id,
-      json: true,
-      retry: 5,
+    const opts: HttpOptions = {
       headers,
       useCache,
     };
-    const raw = await got(pkgUrl, opts);
-    // istanbul ignore if
+    const raw = await http.getJson<NpmResponse>(pkgUrl, opts);
     if (retries < 3) {
       logger.debug({ pkgUrl, retries }, 'Recovered from npm error');
     }
@@ -160,22 +203,23 @@ export async function getDependency(
       'dist-tags': res['dist-tags'],
       'renovate-config': latestVersion['renovate-config'],
     };
-    if (res.repository && res.repository.directory) {
+    if (res.repository?.directory) {
       dep.sourceDirectory = res.repository.directory;
     }
     if (latestVersion.deprecated) {
       dep.deprecationMessage = `On registry \`${regUrl}\`, the "latest" version (v${dep.latestVersion}) of dependency \`${packageName}\` has the following deprecation notice:\n\n\`${latestVersion.deprecated}\`\n\nMarking the latest version of an npm package as deprecated results in the entire package being considered deprecated, so contact the package author you think this is a mistake.`;
       dep.deprecationSource = id;
     }
-    dep.releases = Object.keys(res.versions).map(version => {
+    dep.releases = Object.keys(res.versions).map((version) => {
       const release: NpmRelease = {
         version,
         gitRef: res.versions[version].gitHead,
       };
-      if (res.time && res.time[version]) {
+      if (res.time?.[version]) {
         release.releaseTimestamp = res.time[version];
+        const relDate = DateTime.fromISO(release.releaseTimestamp);
         release.canBeUnpublished =
-          moment().diff(moment(release.releaseTimestamp), 'days') === 0;
+          relDate.isValid && DateTime.local().diff(relDate, 'days').days < 1;
       }
       if (res.versions[version].deprecated) {
         release.isDeprecated = true;
@@ -187,9 +231,19 @@ export async function getDependency(
     memcache[packageName] = JSON.stringify(dep);
     const cacheMinutes = process.env.RENOVATE_CACHE_NPM_MINUTES
       ? parseInt(process.env.RENOVATE_CACHE_NPM_MINUTES, 10)
-      : 5;
-    if (!packageName.startsWith('@')) {
-      await renovateCache.set(cacheNamespace, pkgUrl, dep, cacheMinutes);
+      : 15;
+    // TODO: use dynamic detection of public repos instead of a static list
+    const whitelistedPublicScopes = [
+      '@graphql-codegen',
+      '@storybook',
+      '@types',
+      '@typescript-eslint',
+    ];
+    if (
+      whitelistedPublicScopes.includes(scope) ||
+      !packageName.startsWith('@')
+    ) {
+      await packageCache.set(cacheNamespace, pkgUrl, dep, cacheMinutes);
     }
     return dep;
   } catch (err) {
@@ -207,7 +261,6 @@ export async function getDependency(
       );
       return null;
     }
-    // istanbul ignore if
     if (err.statusCode === 402) {
       logger.debug(
         {
@@ -238,17 +291,21 @@ export async function getDependency(
           err.code === 'ETIMEDOUT') &&
         retries > 0
       ) {
-        logger.warn({ pkgUrl, errName: err.name }, 'Retrying npm error');
-        await delay(5000);
+        // Delay a random time to avoid contention
+        const delaySeconds = 5 + Math.round(Math.random() * 25);
+        logger.warn(
+          { pkgUrl, errName: err.name, delaySeconds },
+          'Retrying npm error'
+        );
+        await delay(1000 * delaySeconds);
         return getDependency(packageName, retries - 1);
       }
       // istanbul ignore if
       if (err.name === 'ParseError' && err.body) {
         err.body = 'err.body deleted by Renovate';
       }
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
-    // istanbul ignore next
     return null;
   }
 }

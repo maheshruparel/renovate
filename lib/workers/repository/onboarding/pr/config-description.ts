@@ -1,8 +1,9 @@
-import { emojify } from '../../../../util/emoji';
-import { logger } from '../../../../logger';
-import { configFileNames } from '../../../../config/app-strings';
+import is from '@sindresorhus/is/dist';
 import { RenovateConfig } from '../../../../config';
+import { configFileNames } from '../../../../config/app-strings';
+import { logger } from '../../../../logger';
 import { PackageFile } from '../../../../manager/common';
+import { emojify } from '../../../../util/emoji';
 
 const defaultConfigFile = configFileNames[0];
 
@@ -17,14 +18,15 @@ export function getScheduleDesc(config: RenovateConfig): string[] {
     logger.debug('No schedule');
     return [];
   }
-  const desc = `Run Renovate on following schedule: ${config.schedule}`;
+  const desc = `Run Renovate on following schedule: ${String(config.schedule)}`;
   return [desc];
 }
 
 function getDescriptionArray(config: RenovateConfig): string[] {
   logger.debug('getDescriptionArray()');
   logger.trace({ config });
-  return (config.description || []).concat(getScheduleDesc(config));
+  const desc = is.nonEmptyArray(config.description) ? config.description : [];
+  return desc.concat(getScheduleDesc(config));
 }
 
 export function getConfigDesc(
@@ -41,7 +43,7 @@ export function getConfigDesc(
   logger.debug({ length: descriptionArr.length }, 'Found description array');
   let desc = `\n### Configuration Summary\n\nBased on the default config's presets, Renovate will:\n\n`;
   desc += `  - Start dependency updates only once this onboarding PR is merged\n`;
-  descriptionArr.forEach(d => {
+  descriptionArr.forEach((d) => {
     desc += `  - ${d}\n`;
   });
   desc += '\n';

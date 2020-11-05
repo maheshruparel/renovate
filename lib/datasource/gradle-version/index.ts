@@ -1,29 +1,20 @@
-import is from '@sindresorhus/is';
-import { coerce } from 'semver';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import { Http } from '../../util/http';
 import { regEx } from '../../util/regex';
-import { logger } from '../../logger';
-import got from '../../util/got';
-import {
-  DatasourceError,
-  GetReleasesConfig,
-  ReleaseResult,
-  Release,
-} from '../common';
+import { GetReleasesConfig, ReleaseResult } from '../common';
 
 export const id = 'gradle-version';
+export const defaultRegistryUrls = ['https://services.gradle.org/versions/all'];
+export const registryStrategy = 'merge';
 
-const GradleVersionsServiceUrl = 'https://services.gradle.org/versions/all';
+const http = new Http(id);
 
 interface GradleRelease {
-  body: {
-    snapshot?: boolean;
-    nightly?: boolean;
-    rcFor?: string;
-    version: string;
-    downloadUrl?: string;
-    checksumUrl?: string;
-    buildTime?: string;
-  }[];
+  snapshot?: boolean;
+  nightly?: boolean;
+  rcFor?: string;
+  version: string;
+  buildTime?: string;
 }
 
 const buildTimeRegex = regEx(
@@ -40,47 +31,32 @@ function formatBuildTime(timeStr: string): string | null {
   return null;
 }
 
-export async function getPkgReleases({
-  registryUrls,
+export async function getReleases({
+  registryUrl,
 }: GetReleasesConfig): Promise<ReleaseResult> {
-  const versionsUrls = is.nonEmptyArray(registryUrls)
-    ? registryUrls
-    : [GradleVersionsServiceUrl];
-
-  const allReleases: Release[][] = await Promise.all(
-    versionsUrls.map(async url => {
-      try {
-        const response: GradleRelease = await got(url, {
-          hostType: id,
-          json: true,
-        });
-        const releases = response.body
-          .filter(release => !release.snapshot && !release.nightly)
-          .filter(
-            release =>
-              // some milestone have wrong metadata and need to be filtered by version name content
-              release.rcFor === '' && !release.version.includes('milestone')
-          )
-          .map(release => ({
-            version: coerce(release.version).toString(),
-            downloadUrl: release.downloadUrl,
-            checksumUrl: release.checksumUrl,
-            releaseTimestamp: formatBuildTime(release.buildTime),
-          }));
-        return releases;
-      } catch (err) /* istanbul ignore next */ {
-        // istanbul ignore if
-        if (err.host === 'services.gradle.org') {
-          throw new DatasourceError(err);
-        }
-        logger.debug({ err }, 'gradle-version err');
-        return null;
-      }
-    })
-  );
+  let releases;
+  try {
+    const response = await http.getJson<GradleRelease[]>(registryUrl);
+    releases = response.body
+      .filter((release) => !release.snapshot && !release.nightly)
+      .filter(
+        (release) =>
+          // some milestone have wrong metadata and need to be filtered by version name content
+          release.rcFor === '' && !release.version.includes('milestone')
+      )
+      .map((release) => ({
+        version: release.version,
+        releaseTimestamp: formatBuildTime(release.buildTime),
+      }));
+  } catch (err) /* istanbul ignore next */ {
+    if (err.host === 'services.gradle.org') {
+      throw new ExternalHostError(err);
+    }
+    throw err;
+  }
 
   const res: ReleaseResult = {
-    releases: Array.prototype.concat.apply([], allReleases).filter(Boolean),
+    releases,
     homepage: 'https://gradle.org',
     sourceUrl: 'https://github.com/gradle/gradle',
   };

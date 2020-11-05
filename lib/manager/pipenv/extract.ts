@@ -1,14 +1,14 @@
-import is from '@sindresorhus/is';
-import toml from 'toml';
+import toml from '@iarna/toml';
 import { RANGE_PATTERN } from '@renovate/pep440/lib/specifier';
-import { logger } from '../../logger';
-import { PackageFile, PackageDependency } from '../common';
+import is from '@sindresorhus/is';
 import * as datasourcePypi from '../../datasource/pypi';
+import { logger } from '../../logger';
 import { SkipReason } from '../../types';
+import { PackageDependency, PackageFile } from '../common';
 
 // based on https://www.python.org/dev/peps/pep-0508/#names
 const packageRegex = /^([A-Z0-9]|[A-Z0-9][A-Z0-9._-]*[A-Z0-9])$/i;
-const rangePattern = RANGE_PATTERN;
+const rangePattern: string = RANGE_PATTERN;
 
 const specifierPartPattern = `\\s*${rangePattern.replace(
   /\?<\w+>/g,
@@ -46,7 +46,7 @@ function extractFromSection(
   const pipfileSection = pipfile[section];
 
   const deps = Object.entries(pipfileSection)
-    .map(x => {
+    .map((x) => {
       const [depName, requirements] = x;
       let currentValue: string;
       let nestedVersion: boolean;
@@ -103,7 +103,7 @@ function extractFromSection(
       if (requirements.index) {
         if (is.array(pipfile.source)) {
           const source = pipfile.source.find(
-            item => item.name === requirements.index
+            (item) => item.name === requirements.index
           );
           if (source) {
             dep.registryUrls = [source.url];
@@ -121,14 +121,15 @@ export function extractPackageFile(content: string): PackageFile | null {
 
   let pipfile: PipFile;
   try {
-    pipfile = toml.parse(content);
+    // TODO: fix type
+    pipfile = toml.parse(content) as any;
   } catch (err) {
     logger.debug({ err }, 'Error parsing Pipfile');
     return null;
   }
   const res: PackageFile = { deps: [] };
   if (pipfile.source) {
-    res.registryUrls = pipfile.source.map(source => source.url);
+    res.registryUrls = pipfile.source.map((source) => source.url);
   }
 
   res.deps = [

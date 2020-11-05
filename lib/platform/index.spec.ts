@@ -1,13 +1,9 @@
-import * as github from './github';
-import * as gitlab from './gitlab';
-import * as gitea from './gitea';
-import * as azure from './azure';
-import * as bitbucket from './bitbucket';
-import * as bitbucketServer from './bitbucket-server';
 import { PLATFORM_NOT_FOUND } from '../constants/error-messages';
+import { PLATFORM_TYPE_BITBUCKET } from '../constants/platforms';
+import { loadModules } from '../util/modules';
 
 import * as platform from '.';
-import { PLATFORM_TYPE_BITBUCKET } from '../constants/platforms';
+import { Platform } from '.';
 
 jest.unmock('.');
 
@@ -15,6 +11,30 @@ describe('platform', () => {
   beforeEach(() => {
     jest.resetModules();
   });
+
+  it('validates', () => {
+    function validate(module: Platform, name: string): boolean {
+      // TODO: test required api
+      if (!module.initPlatform) {
+        throw Error(`Missing api on ${name}`);
+      }
+      return true;
+    }
+    const platforms = platform.getPlatforms();
+
+    const loadedMgr = loadModules(
+      __dirname,
+      null,
+      (m) => !['utils', 'git'].includes(m)
+    );
+    expect(Array.from(platforms.keys())).toEqual(Object.keys(loadedMgr));
+
+    for (const name of platforms.keys()) {
+      const value = platforms.get(name);
+      expect(validate(value, name)).toBe(true);
+    }
+  });
+
   it('throws if no platform', () => {
     expect(() => platform.platform.initPlatform({})).toThrow(
       PLATFORM_NOT_FOUND
@@ -41,53 +61,27 @@ describe('platform', () => {
     };
     expect(await platform.initPlatform(config)).toMatchSnapshot();
   });
-  it('has a list of supported methods for github', () => {
-    const githubMethods = Object.keys(github).sort();
-    expect(githubMethods).toMatchSnapshot();
+  it('returns null if empty email given', () => {
+    expect(platform.parseGitAuthor(undefined)).toBeNull();
   });
-
-  it('has a list of supported methods for gitlab', () => {
-    const gitlabMethods = Object.keys(gitlab).sort();
-    expect(gitlabMethods).toMatchSnapshot();
+  it('parses bot email', () => {
+    expect(
+      platform.parseGitAuthor('some[bot]@users.noreply.github.com')
+    ).toMatchSnapshot();
   });
-
-  it('has a list of supported methods for gitea', () => {
-    const giteaMethods = Object.keys(gitea).sort();
-    expect(giteaMethods).toMatchSnapshot();
+  it('parses bot name and email', () => {
+    expect(
+      platform.parseGitAuthor(
+        '"some[bot]" <some[bot]@users.noreply.github.com>'
+      )
+    ).toMatchSnapshot();
   });
-
-  it('has a list of supported methods for azure', () => {
-    const azureMethods = Object.keys(azure).sort();
-    expect(azureMethods).toMatchSnapshot();
+  it('escapes names', () => {
+    expect(
+      platform.parseGitAuthor('name [what] <name@what.com>').name
+    ).toMatchSnapshot();
   });
-
-  it('has same API for github and gitlab', () => {
-    const githubMethods = Object.keys(github).sort();
-    const gitlabMethods = Object.keys(gitlab).sort();
-    expect(githubMethods).toMatchObject(gitlabMethods);
-  });
-
-  it('has same API for github and gitea', () => {
-    const githubMethods = Object.keys(github).sort();
-    const giteaMethods = Object.keys(gitea).sort();
-    expect(githubMethods).toMatchObject(giteaMethods);
-  });
-
-  it('has same API for github and azure', () => {
-    const githubMethods = Object.keys(github).sort();
-    const azureMethods = Object.keys(azure).sort();
-    expect(githubMethods).toMatchObject(azureMethods);
-  });
-
-  it('has same API for github and Bitbucket', () => {
-    const githubMethods = Object.keys(github).sort();
-    const bitbucketMethods = Object.keys(bitbucket).sort();
-    expect(bitbucketMethods).toMatchObject(githubMethods);
-  });
-
-  it('has same API for github and Bitbucket Server', () => {
-    const githubMethods = Object.keys(github).sort();
-    const bitbucketMethods = Object.keys(bitbucketServer).sort();
-    expect(bitbucketMethods).toMatchObject(githubMethods);
+  it('gives up', () => {
+    expect(platform.parseGitAuthor('a.b.c')).toBeNull();
   });
 });

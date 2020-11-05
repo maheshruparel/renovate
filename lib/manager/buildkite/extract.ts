@@ -1,8 +1,8 @@
-import { logger } from '../../logger';
-import { isVersion } from '../../versioning/semver';
-import { PackageFile, PackageDependency } from '../common';
 import * as datasourceGithubTags from '../../datasource/github-tags';
+import { logger } from '../../logger';
 import { SkipReason } from '../../types';
+import { isVersion } from '../../versioning/semver';
+import { PackageDependency, PackageFile } from '../common';
 
 export function extractPackageFile(content: string): PackageFile | null {
   const deps: PackageDependency[] = [];
@@ -56,7 +56,6 @@ export function extractPackageFile(content: string): PackageFile | null {
             }
           }
           const dep: PackageDependency = {
-            managerData: { lineNumber },
             depName,
             currentValue,
             skipReason,

@@ -1,13 +1,13 @@
 import { readFileSync } from 'fs';
+import { fs } from '../../../../test/util';
 import { getNpmLock } from './npm';
-import { platform as _platform } from '../../../platform';
 
-const platform: any = _platform;
+jest.mock('../../../util/fs');
 
 describe('manager/npm/extract/npm', () => {
   describe('.getNpmLock()', () => {
     it('returns empty if failed to parse', async () => {
-      platform.getFile.mockReturnValueOnce('abcd');
+      fs.readLocalFile.mockResolvedValueOnce('abcd');
       const res = await getNpmLock('package.json');
       expect(Object.keys(res)).toHaveLength(0);
     });
@@ -15,13 +15,13 @@ describe('manager/npm/extract/npm', () => {
       const plocktest1Lock = readFileSync(
         'lib/manager/npm/__fixtures__/plocktest1/package-lock.json'
       );
-      platform.getFile.mockReturnValueOnce(plocktest1Lock);
+      fs.readLocalFile.mockResolvedValueOnce(plocktest1Lock as never);
       const res = await getNpmLock('package.json');
       expect(res).toMatchSnapshot();
       expect(Object.keys(res)).toHaveLength(7);
     });
     it('returns empty if no deps', async () => {
-      platform.getFile.mockResolvedValueOnce('{}');
+      fs.readLocalFile.mockResolvedValueOnce('{}');
       const res = await getNpmLock('package.json');
       expect(Object.keys(res)).toHaveLength(0);
     });

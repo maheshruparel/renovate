@@ -1,26 +1,32 @@
-import * as handlebars from 'handlebars';
 import { DateTime } from 'luxon';
-import semver from 'semver';
 import mdTable from 'markdown-table';
-import { logger } from '../../../logger';
+import semver from 'semver';
 import { mergeChildConfig } from '../../../config';
+import { CONFIG_SECRETS_EXPOSED } from '../../../constants/error-messages';
+import { logger } from '../../../logger';
+import { sanitize } from '../../../util/sanitize';
+import * as template from '../../../util/template';
 import { BranchConfig, BranchUpgradeConfig } from '../../common';
+import { formatCommitMessagePrefix } from '../util/commit-message';
 
-function ifTypesGroup(
-  depNames: string[],
-  hasGroupName: boolean,
-  branchUpgrades: any[]
-): boolean {
+function isTypesGroup(branchUpgrades: BranchUpgradeConfig[]): boolean {
   return (
-    depNames.length === 2 &&
-    !hasGroupName &&
-    ((branchUpgrades[0].depName &&
-      branchUpgrades[0].depName.startsWith('@types/') &&
-      branchUpgrades[0].depName.endsWith(branchUpgrades[1].depName)) ||
-      (branchUpgrades[1].depName &&
-        branchUpgrades[1].depName.startsWith('@types/') &&
-        branchUpgrades[1].depName.endsWith(branchUpgrades[0].depName)))
+    branchUpgrades.some(({ depName }) => depName?.startsWith('@types/')) &&
+    new Set(
+      branchUpgrades.map(({ depName }) => depName?.replace(/^@types\//, ''))
+    ).size === 1
   );
+}
+
+function sortTypesGroup(upgrades: BranchUpgradeConfig[]): void {
+  const isTypesUpgrade = ({ depName }: BranchUpgradeConfig): boolean =>
+    depName?.startsWith('@types/');
+  const regularUpgrades = upgrades.filter(
+    (upgrade) => !isTypesUpgrade(upgrade)
+  );
+  const typesUpgrades = upgrades.filter(isTypesUpgrade);
+  upgrades.splice(0, upgrades.length);
+  upgrades.push(...regularUpgrades, ...typesUpgrades);
 }
 
 function getTableValues(
@@ -62,18 +68,17 @@ function getTableValues(
 export function generateBranchConfig(
   branchUpgrades: BranchUpgradeConfig[]
 ): BranchConfig {
-  logger.debug(`generateBranchConfig(${branchUpgrades.length})`);
-  logger.trace({ config: branchUpgrades });
+  logger.trace({ config: branchUpgrades }, 'generateBranchConfig');
   let config: BranchConfig = {
     upgrades: [],
   } as any;
   const hasGroupName = branchUpgrades[0].groupName !== null;
-  logger.debug(`hasGroupName: ${hasGroupName}`);
+  logger.trace(`hasGroupName: ${hasGroupName}`);
   // Use group settings only if multiple upgrades or lazy grouping is disabled
-  const depNames = [];
-  const newValue = [];
-  const toVersions = [];
-  branchUpgrades.forEach(upg => {
+  const depNames: string[] = [];
+  const newValue: string[] = [];
+  const toVersions: string[] = [];
+  branchUpgrades.forEach((upg) => {
     if (!depNames.includes(upg.depName)) {
       depNames.push(upg.depName);
     }
@@ -81,7 +86,7 @@ export function generateBranchConfig(
       toVersions.push(upg.toVersion);
     }
     if (upg.commitMessageExtra) {
-      const extra = handlebars.compile(upg.commitMessageExtra)(upg);
+      const extra = template.compile(upg.commitMessageExtra, upg);
       if (!newValue.includes(extra)) {
         newValue.push(extra);
       }
@@ -90,15 +95,16 @@ export function generateBranchConfig(
   const groupEligible =
     depNames.length > 1 ||
     toVersions.length > 1 ||
-    (!toVersions[0] && newValue.length > 1) ||
-    branchUpgrades[0].lazyGrouping === false;
+    (!toVersions[0] && newValue.length > 1);
   if (newValue.length > 1 && !groupEligible) {
     // eslint-disable-next-line no-param-reassign
     branchUpgrades[0].commitMessageExtra = `to v${toVersions[0]}`;
   }
-  logger.debug(`groupEligible: ${groupEligible}`);
+  const typesGroup =
+    depNames.length > 1 && !hasGroupName && isTypesGroup(branchUpgrades);
+  logger.trace(`groupEligible: ${groupEligible}`);
   const useGroupSettings = hasGroupName && groupEligible;
-  logger.debug(`useGroupSettings: ${useGroupSettings}`);
+  logger.trace(`useGroupSettings: ${useGroupSettings}`);
   let releaseTimestamp: string;
   for (const branchUpgrade of branchUpgrades) {
     let upgrade: BranchUpgradeConfig = { ...branchUpgrade };
@@ -142,12 +148,6 @@ export function generateBranchConfig(
     ) {
       logger.debug({ config: upgrade }, 'empty displayFrom/displayTo');
     }
-    if (upgrade.depName) {
-      upgrade.depNameEscaped = (upgrade.lookupName || upgrade.depName).replace(
-        /\//g,
-        '%2f'
-      );
-    }
     upgrade.prettyDepType =
       upgrade.prettyDepType || upgrade.depType || 'dependency';
     if (useGroupSettings) {
@@ -159,12 +159,9 @@ export function generateBranchConfig(
     }
     // Delete group config regardless of whether it was applied
     delete upgrade.group;
-    delete upgrade.lazyGrouping;
-
-    const isTypesGroup = ifTypesGroup(depNames, hasGroupName, branchUpgrades);
 
     // istanbul ignore else
-    if (toVersions.length > 1 && !isTypesGroup) {
+    if (toVersions.length > 1 && !typesGroup) {
       logger.trace({ toVersions });
       delete upgrade.commitMessageExtra;
       upgrade.recreateClosed = true;
@@ -175,44 +172,33 @@ export function generateBranchConfig(
     } else if (semver.valid(toVersions[0])) {
       upgrade.isRange = false;
     }
-    // extract parentDir and baseDir from packageFile
-    if (upgrade.packageFile) {
-      const packagePath = upgrade.packageFile.split('/');
-      if (packagePath.length > 0) {
-        packagePath.splice(-1, 1);
-      }
-      if (packagePath.length > 0) {
-        upgrade.parentDir = packagePath[packagePath.length - 1];
-        upgrade.baseDir = packagePath.join('/');
-      } else {
-        upgrade.parentDir = '';
-        upgrade.baseDir = '';
-      }
-    }
     // Use templates to generate strings
-    logger.trace('Compiling branchName: ' + upgrade.branchName);
-    upgrade.branchName = handlebars.compile(upgrade.branchName)(upgrade);
-    if (upgrade.semanticCommits && !upgrade.commitMessagePrefix) {
+    if (upgrade.semanticCommits === 'enabled' && !upgrade.commitMessagePrefix) {
       logger.trace('Upgrade has semantic commits enabled');
       let semanticPrefix = upgrade.semanticCommitType;
       if (upgrade.semanticCommitScope) {
-        semanticPrefix += `(${handlebars.compile(upgrade.semanticCommitScope)(
+        semanticPrefix += `(${template.compile(
+          upgrade.semanticCommitScope,
           upgrade
         )})`;
       }
-      upgrade.commitMessagePrefix = semanticPrefix;
-      upgrade.commitMessagePrefix += semanticPrefix.endsWith(':') ? ' ' : ': ';
+      upgrade.commitMessagePrefix = formatCommitMessagePrefix(semanticPrefix);
       upgrade.toLowerCase =
         // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec
         upgrade.semanticCommitType.match(/[A-Z]/) === null &&
         !upgrade.semanticCommitType.startsWith(':');
     }
     // Compile a few times in case there are nested templates
-    upgrade.commitMessage = handlebars.compile(upgrade.commitMessage || '')(
+    upgrade.commitMessage = template.compile(
+      upgrade.commitMessage || '',
       upgrade
     );
-    upgrade.commitMessage = handlebars.compile(upgrade.commitMessage)(upgrade);
-    upgrade.commitMessage = handlebars.compile(upgrade.commitMessage)(upgrade);
+    upgrade.commitMessage = template.compile(upgrade.commitMessage, upgrade);
+    upgrade.commitMessage = template.compile(upgrade.commitMessage, upgrade);
+    // istanbul ignore if
+    if (upgrade.commitMessage !== sanitize(upgrade.commitMessage)) {
+      throw new Error(CONFIG_SECRETS_EXPOSED);
+    }
     upgrade.commitMessage = upgrade.commitMessage.trim(); // Trim exterior whitespace
     upgrade.commitMessage = upgrade.commitMessage.replace(/\s+/g, ' '); // Trim extra whitespace inside string
     upgrade.commitMessage = upgrade.commitMessage.replace(
@@ -220,24 +206,29 @@ export function generateBranchConfig(
       'to v$1'
     );
     if (upgrade.toLowerCase) {
-      // We only need to lowercvase the first line
+      // We only need to lowercase the first line
       const splitMessage = upgrade.commitMessage.split('\n');
       splitMessage[0] = splitMessage[0].toLowerCase();
       upgrade.commitMessage = splitMessage.join('\n');
     }
     if (upgrade.commitBody) {
-      upgrade.commitMessage = `${upgrade.commitMessage}\n\n${handlebars.compile(
-        upgrade.commitBody
-      )(upgrade)}`;
+      upgrade.commitMessage = `${upgrade.commitMessage}\n\n${template.compile(
+        upgrade.commitBody,
+        upgrade
+      )}`;
     }
     logger.trace(`commitMessage: ` + JSON.stringify(upgrade.commitMessage));
     if (upgrade.prTitle) {
-      upgrade.prTitle = handlebars.compile(upgrade.prTitle)(upgrade);
-      upgrade.prTitle = handlebars.compile(upgrade.prTitle)(upgrade);
-      upgrade.prTitle = handlebars
-        .compile(upgrade.prTitle)(upgrade)
+      upgrade.prTitle = template.compile(upgrade.prTitle, upgrade);
+      upgrade.prTitle = template.compile(upgrade.prTitle, upgrade);
+      upgrade.prTitle = template
+        .compile(upgrade.prTitle, upgrade)
         .trim()
         .replace(/\s+/g, ' ');
+      // istanbul ignore if
+      if (upgrade.prTitle !== sanitize(upgrade.prTitle)) {
+        throw new Error(CONFIG_SECRETS_EXPOSED);
+      }
       if (upgrade.toLowerCase) {
         upgrade.prTitle = upgrade.prTitle.toLowerCase();
       }
@@ -256,8 +247,8 @@ export function generateBranchConfig(
           : '';
       upgrade.prTitle += upgrade.updateType === 'patch' ? ' (patch)' : '';
     }
-    // Compile again to allow for nested handlebars templates
-    upgrade.prTitle = handlebars.compile(upgrade.prTitle)(upgrade);
+    // Compile again to allow for nested templates
+    upgrade.prTitle = template.compile(upgrade.prTitle, upgrade);
     logger.trace(`prTitle: ` + JSON.stringify(upgrade.prTitle));
     config.upgrades.push(upgrade);
     if (upgrade.releaseTimestamp) {
@@ -272,25 +263,14 @@ export function generateBranchConfig(
       }
     }
   }
-  if (
-    depNames.length === 2 &&
-    !hasGroupName &&
-    config.upgrades[0].depName &&
-    config.upgrades[0].depName.startsWith('@types/') &&
-    config.upgrades[0].depName.endsWith(config.upgrades[1].depName)
-  ) {
-    logger.debug('Found @types - reversing upgrades to use depName in PR');
-    config.upgrades.reverse();
-    config.upgrades[0].recreateClosed = false;
-    config.hasTypes = true;
-  } else if (
-    depNames.length === 2 &&
-    !hasGroupName &&
-    config.upgrades[1].depName &&
-    config.upgrades[1].depName.startsWith('@types/') &&
-    config.upgrades[1].depName.endsWith(config.upgrades[0].depName)
-  ) {
-    // do nothing
+
+  if (typesGroup) {
+    if (config.upgrades[0].depName?.startsWith('@types/')) {
+      logger.debug('Found @types - reversing upgrades to use depName in PR');
+      sortTypesGroup(config.upgrades);
+      config.upgrades[0].recreateClosed = false;
+      config.hasTypes = true;
+    }
   } else {
     config.upgrades.sort((a, b) => {
       if (a.fileReplacePosition && b.fileReplacePosition) {
@@ -309,21 +289,27 @@ export function generateBranchConfig(
   // Now assign first upgrade's config as branch config
   config = { ...config, ...config.upgrades[0], releaseTimestamp }; // TODO: fixme
   config.canBeUnpublished = config.upgrades.some(
-    upgrade => upgrade.canBeUnpublished
+    (upgrade) => upgrade.canBeUnpublished
   );
   config.reuseLockFiles = config.upgrades.every(
-    upgrade => upgrade.updateType !== 'lockFileMaintenance'
+    (upgrade) => upgrade.updateType !== 'lockFileMaintenance'
   );
-  config.masterIssueApproval = config.upgrades.some(
-    upgrade => upgrade.masterIssueApproval
+  config.dependencyDashboardApproval = config.upgrades.some(
+    (upgrade) => upgrade.dependencyDashboardApproval
   );
-  config.masterIssuePrApproval = config.upgrades.some(
-    upgrade => upgrade.prCreation === 'approval'
+  config.dependencyDashboardPrApproval = config.upgrades.some(
+    (upgrade) => upgrade.prCreation === 'approval'
   );
-  config.automerge = config.upgrades.every(upgrade => upgrade.automerge);
-  config.blockedByPin = config.upgrades.every(upgrade => upgrade.blockedByPin);
+  config.automerge = config.upgrades.every((upgrade) => upgrade.automerge);
+  config.blockedByPin = config.upgrades.every(
+    (upgrade) => upgrade.blockedByPin
+  );
+  config.constraints = Object.assign(
+    {},
+    ...config.upgrades.map((upgrade) => upgrade.constraints)
+  );
   const tableRows = config.upgrades
-    .map(upgrade => getTableValues(upgrade))
+    .map((upgrade) => getTableValues(upgrade))
     .filter(Boolean);
   if (tableRows.length) {
     let table = [];

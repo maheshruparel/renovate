@@ -1,6 +1,6 @@
 import { logger } from '../../logger';
+import { PackageDependency, PackageFile } from '../common';
 import { getDep } from '../dockerfile/extract';
-import { PackageFile, PackageDependency } from '../common';
 
 function skipCommentLines(
   lines: string[],
@@ -20,12 +20,12 @@ export function extractPackageFile(content: string): PackageFile | null {
     const lines = content.split('\n');
     for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
       const line = lines[lineNumber];
-      const imageMatch = /^\s*image:\s*'?"?([^\s]+|)'?"?\s*$/.exec(line);
+      const imageMatch = /^\s*image:\s*'?"?([^\s'"]+|)'?"?\s*$/.exec(line);
       if (imageMatch) {
         switch (imageMatch[1]) {
           case '': {
             const imageNameLine = skipCommentLines(lines, lineNumber + 1);
-            const imageNameMatch = /^\s*name:\s*'?"?([^\s]+|)'?"?\s*$/.exec(
+            const imageNameMatch = /^\s*name:\s*'?"?([^\s'"]+|)'?"?\s*$/.exec(
               imageNameLine.line
             );
 
@@ -34,7 +34,6 @@ export function extractPackageFile(content: string): PackageFile | null {
               logger.trace(`Matched image name on line ${lineNumber}`);
               const currentFrom = imageNameMatch[1];
               const dep = getDep(currentFrom);
-              dep.managerData = { lineNumber };
               dep.depType = 'image-name';
               deps.push(dep);
             }
@@ -44,7 +43,6 @@ export function extractPackageFile(content: string): PackageFile | null {
             logger.trace(`Matched image on line ${lineNumber}`);
             const currentFrom = imageMatch[1];
             const dep = getDep(currentFrom);
-            dep.managerData = { lineNumber };
             dep.depType = 'image';
             deps.push(dep);
           }
@@ -67,7 +65,6 @@ export function extractPackageFile(content: string): PackageFile | null {
             const currentFrom = serviceImageMatch[1];
             lineNumber = serviceImageLine.lineNumber;
             const dep = getDep(currentFrom);
-            dep.managerData = { lineNumber };
             dep.depType = 'service-image';
             deps.push(dep);
           }

@@ -1,12 +1,12 @@
-import { RenovateConfigStage } from './common';
+import { PLATFORM_TYPE_GITHUB } from '../constants/platforms';
+import { getManagers } from '../manager';
+import { getPlatformList } from '../platform';
+import { getVersioningList } from '../versioning';
 import * as dockerVersioning from '../versioning/docker';
 import * as pep440Versioning from '../versioning/pep440';
 import * as semverVersioning from '../versioning/semver';
-import { getVersioningList } from '../versioning';
-import { PLATFORM_TYPE_GITHUB } from '../constants/platforms';
-import { platformList } from '../platform';
 
-import { getManagers } from '../manager';
+import { RenovateConfigStage } from './common';
 
 export interface RenovateOptionBase {
   admin?: boolean;
@@ -38,17 +38,22 @@ export interface RenovateOptionBase {
   stage?: RenovateConfigStage;
 }
 
-export interface RenovateArrayOption<T extends string | object = object>
-  extends RenovateOptionBase {
+export interface RenovateArrayOption<
+  T extends string | number | Record<string, unknown> = Record<string, unknown>
+> extends RenovateOptionBase {
   default?: T[];
   mergeable?: boolean;
   type: 'array';
-  subType?: 'string' | 'object';
+  subType?: 'string' | 'object' | 'number';
 }
 
 export interface RenovateStringArrayOption extends RenovateArrayOption<string> {
   format?: 'regex';
   subType: 'string';
+}
+
+export interface RenovateNumberArrayOption extends RenovateArrayOption<number> {
+  subType: 'number';
 }
 
 export interface RenovateBooleanOption extends RenovateOptionBase {
@@ -72,13 +77,14 @@ export interface RenovateStringOption extends RenovateOptionBase {
 
 export interface RenovateObjectOption extends RenovateOptionBase {
   default?: any;
-  additionalProperties?: {} | boolean;
+  additionalProperties?: Record<string, unknown> | boolean;
   mergeable?: boolean;
   type: 'object';
 }
 
 export type RenovateOptions =
   | RenovateStringOption
+  | RenovateNumberArrayOption
   | RenovateStringArrayOption
   | RenovateIntegerOption
   | RenovateBooleanOption
@@ -131,6 +137,15 @@ const options: RenovateOptions[] = [
       'Change this value in order to override the default onboarding branch name.',
     type: 'string',
     default: 'renovate/configure',
+    admin: true,
+    cli: false,
+  },
+  {
+    name: 'onboardingCommitMessage',
+    description:
+      'Change this value in order to override the default onboarding commit message.',
+    type: 'string',
+    default: null,
     admin: true,
     cli: false,
   },
@@ -199,6 +214,15 @@ const options: RenovateOptions[] = [
     env: false,
   },
   {
+    name: 'repositoryCache',
+    description: 'Option to do repository extract caching.',
+    admin: true,
+    type: 'string',
+    allowedValues: ['disabled', 'enabled', 'reset'],
+    stage: 'repository',
+    default: 'disabled',
+  },
+  {
     name: 'force',
     description:
       'Any configuration defined within this object will force override existing settings',
@@ -215,6 +239,12 @@ const options: RenovateOptions[] = [
     stage: 'global',
     type: 'boolean',
     default: true,
+  },
+  {
+    name: 'draftPR',
+    description: 'If enabled, the PR created by Renovate is set to a draft.',
+    type: 'boolean',
+    default: false,
   },
   {
     name: 'dryRun',
@@ -242,6 +272,13 @@ const options: RenovateOptions[] = [
     default: 'auto',
   },
   {
+    name: 'redisUrl',
+    description:
+      'If defined, this redis url will be used for caching instead of the file system',
+    admin: true,
+    type: 'string',
+  },
+  {
     name: 'baseDir',
     description:
       'The base directory for Renovate to store local files, including repository files and cache. If left empty, Renovate will create its own temporary directory to use.',
@@ -264,11 +301,27 @@ const options: RenovateOptions[] = [
     default: false,
   },
   {
+    name: 'dockerImagePrefix',
+    description:
+      'Change this value in order to override the default renovate docker sidecar image name prefix.',
+    type: 'string',
+    default: 'docker.io/renovate',
+    admin: true,
+  },
+  {
     name: 'dockerUser',
     description:
       'Specify UID and GID for docker-based binaries when binarySource=docker is used.',
     admin: true,
     type: 'string',
+  },
+  {
+    name: 'composerIgnorePlatformReqs',
+    description:
+      'Enable / disable use of --ignore-platform-reqs in the composer package manager.',
+    type: 'boolean',
+    default: true,
+    admin: true,
   },
   // Log options
   {
@@ -351,32 +404,47 @@ const options: RenovateOptions[] = [
     default: false,
     admin: true,
   },
-  // Master Issue
+  // Dependency Dashboard
   {
-    name: 'masterIssue',
-    description: 'Whether to create a "Master Issue" within the repository.',
-    type: 'boolean',
-    default: false,
-  },
-  {
-    name: 'masterIssueApproval',
+    name: 'dependencyDashboard',
     description:
-      'Whether updates should require manual approval from within the Master Issue before creation.',
+      'Whether to create a "Dependency Dashboard" issue within the repository.',
     type: 'boolean',
     default: false,
   },
   {
-    name: 'masterIssueAutoclose',
+    name: 'dependencyDashboardApproval',
     description:
-      'Set to `true` and Renovate will autoclose the Master Issue if there are no updates.',
+      'Whether updates should require manual approval from within the Dependency Dashboard issue before creation.',
     type: 'boolean',
     default: false,
   },
   {
-    name: 'masterIssueTitle',
-    description: 'Title to use for the Master Issue',
+    name: 'dependencyDashboardAutoclose',
+    description:
+      'Set to `true` and Renovate will autoclose the Dependency Dashboard issue if there are no updates.',
+    type: 'boolean',
+    default: false,
+  },
+  {
+    name: 'dependencyDashboardTitle',
+    description: 'Title to use for the Dependency Dashboard issue',
     type: 'string',
-    default: `Update Dependencies (Renovate Bot)`,
+    default: `Dependency Dashboard`,
+  },
+  {
+    name: 'dependencyDashboardHeader',
+    description:
+      'Any text added here will be placed first in the Dependency Dashboard issue body.',
+    type: 'string',
+    default:
+      'This issue contains a list of Renovate updates and their statuses.',
+  },
+  {
+    name: 'dependencyDashboardFooter',
+    description:
+      'Any text added here will be placed last in the Dependency Dashboard issue body, with a divider separator before it.',
+    type: 'string',
   },
   {
     name: 'configWarningReuseIssue',
@@ -393,6 +461,13 @@ const options: RenovateOptions[] = [
     stage: 'repository',
     type: 'string',
     replaceLineReturns: true,
+    admin: true,
+  },
+  {
+    name: 'privateKeyPath',
+    description: 'Path to the Server-side private key',
+    stage: 'repository',
+    type: 'string',
     admin: true,
   },
   {
@@ -448,7 +523,6 @@ const options: RenovateOptions[] = [
     name: 'ignoreScripts',
     description:
       'Configure this to true if trustLevel is high but you wish to skip running scripts when updating lock files',
-    stage: 'package',
     type: 'boolean',
     default: false,
   },
@@ -456,14 +530,13 @@ const options: RenovateOptions[] = [
     name: 'platform',
     description: 'Platform type of repository',
     type: 'string',
-    allowedValues: platformList,
+    allowedValues: getPlatformList(),
     default: PLATFORM_TYPE_GITHUB,
     admin: true,
   },
   {
     name: 'endpoint',
     description: 'Custom endpoint to use',
-    stage: 'repository',
     type: 'string',
     admin: true,
     default: null,
@@ -563,7 +636,6 @@ const options: RenovateOptions[] = [
     type: 'array',
     stage: 'package',
     cli: false,
-    env: false,
   },
   {
     name: 'gitAuthor',
@@ -577,6 +649,7 @@ const options: RenovateOptions[] = [
     type: 'string',
     cli: false,
     admin: true,
+    stage: 'global',
   },
   {
     name: 'enabledManagers',
@@ -628,6 +701,15 @@ const options: RenovateOptions[] = [
     subType: 'string',
     default: null,
     stage: 'branch',
+    cli: false,
+    env: false,
+  },
+  {
+    name: 'extractVersion',
+    description:
+      "A regex (re2) to extract a version from a datasource's raw version string",
+    type: 'string',
+    format: 'regex',
     cli: false,
     env: false,
   },
@@ -853,7 +935,8 @@ const options: RenovateOptions[] = [
   // Version behaviour
   {
     name: 'allowedVersions',
-    description: 'A semver range defining allowed versions for dependencies',
+    description:
+      'A version range or regex pattern capturing allowed versions for dependencies',
     type: 'string',
     parent: 'packageRules',
     stage: 'package',
@@ -863,7 +946,6 @@ const options: RenovateOptions[] = [
   {
     name: 'pinDigests',
     description: 'Whether to add digests to Dockerfile source images',
-    stage: 'package',
     type: 'boolean',
     default: false,
   },
@@ -1012,8 +1094,9 @@ const options: RenovateOptions[] = [
   {
     name: 'semanticCommits',
     description: 'Enable semantic commit prefixes for commits and PR titles',
-    type: 'boolean',
-    default: null,
+    type: 'string',
+    allowedValues: ['auto', 'enabled', 'disabled'],
+    default: 'auto',
   },
   {
     name: 'semanticCommitType',
@@ -1053,12 +1136,6 @@ const options: RenovateOptions[] = [
     description: 'Label to use to request the bot to rebase a PR manually',
     type: 'string',
     default: 'rebase',
-  },
-  {
-    name: 'statusCheckVerify',
-    description: 'Set a verify status check for all PRs',
-    type: 'boolean',
-    default: false,
   },
   {
     name: 'unpublishSafe',
@@ -1155,7 +1232,7 @@ const options: RenovateOptions[] = [
     default: {
       groupName: null,
       schedule: [],
-      masterIssueApproval: false,
+      dependencyDashboardApproval: false,
       rangeStrategy: 'update-lockfile',
       commitMessageSuffix: '[SECURITY]',
     },
@@ -1167,12 +1244,12 @@ const options: RenovateOptions[] = [
     name: 'branchName',
     description: 'Branch name template',
     type: 'string',
-    default: '{{{branchPrefix}}}{{{managerBranchPrefix}}}{{{branchTopic}}}',
+    default: '{{{branchPrefix}}}{{{additionalBranchPrefix}}}{{{branchTopic}}}',
     cli: false,
   },
   {
-    name: 'managerBranchPrefix',
-    description: 'Branch manager prefix',
+    name: 'additionalBranchPrefix',
+    description: 'Additional string value to be appended to branchPrefix',
     type: 'string',
     default: '',
     cli: false,
@@ -1244,6 +1321,15 @@ const options: RenovateOptions[] = [
     cli: false,
   },
   {
+    name: 'prBodyTemplate',
+    description:
+      'Pull Request body template. Controls which sections are rendered in the body.',
+    type: 'string',
+    default:
+      '{{{header}}}{{{table}}}{{{notes}}}{{{changelogs}}}{{{configDescription}}}{{{controls}}}{{{footer}}}',
+    cli: false,
+  },
+  {
     name: 'prTitle',
     description:
       'Pull Request title template (deprecated). Now uses commitMessage.',
@@ -1252,11 +1338,16 @@ const options: RenovateOptions[] = [
     cli: false,
   },
   {
+    name: 'prHeader',
+    description: 'Any text added here will be placed first in the PR body.',
+    type: 'string',
+  },
+  {
     name: 'prFooter',
-    description: 'Pull Request footer template',
+    description:
+      'Any text added here will be placed last in the PR body, with a divider separator before it.',
     type: 'string',
     default: `This PR has been generated by [Renovate Bot](https://github.com/renovatebot/renovate).`,
-    stage: 'global',
   },
   {
     name: 'lockFileMaintenance',
@@ -1281,12 +1372,6 @@ const options: RenovateOptions[] = [
     mergeable: true,
   },
   // Dependency Groups
-  {
-    name: 'lazyGrouping',
-    description: 'Use group names only when multiple dependencies upgraded',
-    type: 'boolean',
-    default: true,
-  },
   {
     name: 'groupName',
     description: 'Human understandable name for the dependency group',
@@ -1329,6 +1414,13 @@ const options: RenovateOptions[] = [
     subType: 'string',
   },
   {
+    name: 'assigneesFromCodeOwners',
+    description:
+      'Determine assignees based on configured code owners and changes in PR.',
+    type: 'boolean',
+    default: false,
+  },
+  {
     name: 'assigneesSampleSize',
     description: 'Take a random sample of given size from assignees.',
     type: 'integer',
@@ -1347,6 +1439,13 @@ const options: RenovateOptions[] = [
       'Requested reviewers for Pull Requests (either username or email address depending on the platform)',
     type: 'array',
     subType: 'string',
+  },
+  {
+    name: 'reviewersFromCodeOwners',
+    description:
+      'Determine reviewers based on configured code owners and changes in PR.',
+    type: 'boolean',
+    default: false,
   },
   {
     name: 'reviewersSampleSize',
@@ -1457,32 +1556,6 @@ const options: RenovateOptions[] = [
     type: 'object',
     default: {
       versioning: dockerVersioning.id,
-      managerBranchPrefix: 'docker-',
-      commitMessageTopic: '{{{depName}}} Docker tag',
-      major: { enabled: false },
-      commitMessageExtra:
-        'to v{{#if isMajor}}{{{newMajor}}}{{else}}{{{newVersion}}}{{/if}}',
-      digest: {
-        branchTopic: '{{{depNameSanitized}}}-{{{currentValue}}}',
-        commitMessageExtra: 'to {{newDigestShort}}',
-        commitMessageTopic:
-          '{{{depName}}}{{#if currentValue}}:{{{currentValue}}}{{/if}} Docker digest',
-        group: {
-          commitMessageTopic: '{{{groupName}}}',
-          commitMessageExtra: '',
-        },
-      },
-      pin: {
-        commitMessageExtra: '',
-        groupName: 'Docker digests',
-        group: {
-          commitMessageTopic: '{{{groupName}}}',
-          branchTopic: 'digests-pin',
-        },
-      },
-      group: {
-        commitMessageTopic: '{{{groupName}}} Docker tags',
-      },
     },
     mergeable: true,
     cli: false,
@@ -1508,8 +1581,9 @@ const options: RenovateOptions[] = [
     cli: false,
   },
   {
-    name: 'compatibility',
-    description: 'Configuration object for compatibility',
+    name: 'constraints',
+    description:
+      'Configuration object for define language or manager version constraints',
     type: 'object',
     default: {},
     mergeable: true,
@@ -1595,10 +1669,42 @@ const options: RenovateOptions[] = [
   },
   {
     name: 'insecureRegistry',
-    description: 'explicity turn on insecure docker registry access (http)',
+    description: 'explicitly turn on insecure docker registry access (http)',
     type: 'boolean',
     stage: 'repository',
     parent: 'hostRules',
+    cli: false,
+    env: false,
+  },
+  {
+    name: 'abortOnError',
+    description:
+      'If enabled, Renovate will abort its run when http request errors occur.',
+    type: 'boolean',
+    stage: 'repository',
+    parent: 'hostRules',
+    default: false,
+    cli: false,
+    env: false,
+  },
+  {
+    name: 'abortIgnoreStatusCodes',
+    description:
+      'A list of HTTP status codes to ignore and *not* abort the run because of when abortOnError=true.',
+    type: 'array',
+    subType: 'number',
+    stage: 'repository',
+    parent: 'hostRules',
+    cli: false,
+    env: false,
+  },
+  {
+    name: 'enableHttp2',
+    description: 'Enable got http2 support.',
+    type: 'boolean',
+    stage: 'repository',
+    parent: 'hostRules',
+    default: false,
     cli: false,
     env: false,
   },
@@ -1645,13 +1751,11 @@ const options: RenovateOptions[] = [
     default: ['deprecationWarningIssues'],
     allowedValues: [
       'prIgnoreNotification',
-      'prEditNotification',
       'branchAutomergeFailure',
       'lockFileErrors',
       'artifactErrors',
       'deprecationWarningIssues',
       'onboardingClose',
-      'prValidation',
     ],
     cli: false,
     env: false,
@@ -1667,7 +1771,7 @@ const options: RenovateOptions[] = [
     name: 'unicodeEmoji',
     description: 'Enable or disable Unicode emoji',
     type: 'boolean',
-    default: false,
+    default: true,
   },
   {
     name: 'gitLabAutomerge',
@@ -1732,6 +1836,21 @@ const options: RenovateOptions[] = [
     cli: false,
     env: false,
   },
+  {
+    name: 'fetchReleaseNotes',
+    description: 'Allow to disable release notes fetching',
+    type: 'boolean',
+    default: true,
+    cli: false,
+    env: false,
+  },
+  {
+    name: 'cloneSubmodules',
+    description:
+      'Set to false to disable initialization of submodules during repository clone',
+    type: 'boolean',
+    default: true,
+  },
 ];
 
 export function getOptions(): RenovateOptions[] {
@@ -1739,7 +1858,7 @@ export function getOptions(): RenovateOptions[] {
 }
 
 function loadManagerOptions(): void {
-  for (const [name, config] of Object.entries(getManagers())) {
+  for (const [name, config] of getManagers().entries()) {
     if (config.defaultConfig) {
       const managerConfig: RenovateOptions = {
         name,

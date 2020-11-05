@@ -1,5 +1,5 @@
 import { getManagerList } from '../../manager';
-import { ValidationMessage, PackageRule } from '../common';
+import { PackageRule, ValidationMessage } from '../common';
 
 export interface CheckManagerArgs {
   resolvedRule: PackageRule;
@@ -17,13 +17,13 @@ export function check({
   if (Array.isArray(resolvedRule.managers)) {
     if (
       resolvedRule.managers.find(
-        confManager => !getManagerList().includes(confManager)
+        (confManager) => !getManagerList().includes(confManager)
       )
     ) {
       managersErrMessage = `${currentPath}:
-        You have included an unsupported manager in a package rule. Your list: ${
+        You have included an unsupported manager in a package rule. Your list: ${String(
           resolvedRule.managers
-        }.
+        )}.
         Supported managers are: (${getManagerList().join(', ')}).`;
     }
   } else if (typeof resolvedRule.managers !== 'undefined') {

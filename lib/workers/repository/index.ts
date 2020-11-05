@@ -1,18 +1,21 @@
 import fs from 'fs-extra';
-
-import handleError from './error';
-import { platform } from '../../platform';
+import { RenovateConfig } from '../../config';
 import { logger, setMeta } from '../../logger';
+import { deleteLocalFile } from '../../util/fs';
+import { addSplit, getSplits, splitInit } from '../../util/split';
+import { setBranchCache } from './cache';
+import { ensureMasterIssue } from './dependency-dashboard';
+import handleError from './error';
+import { finaliseRepo } from './finalise';
 import { initRepo } from './init';
 import { ensureOnboardingPr } from './onboarding/pr';
-import { processResult, ProcessResult } from './result';
-import { processRepo } from './process';
-import { finaliseRepo } from './finalise';
-import { ensureMasterIssue } from './master-issue';
-import { RenovateConfig } from '../../config';
+import { extractDependencies, updateRepo } from './process';
+import { ProcessResult, processResult } from './result';
+import { printRequestStats } from './stats';
 
 let renovateVersion = 'unknown';
 try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   renovateVersion = require('../../../package.json').version; // eslint-disable-line global-require
 } catch (err) /* istanbul ignore next */ {
   logger.debug({ err }, 'Error getting renovate version');
@@ -22,6 +25,7 @@ try {
 export async function renovateRepository(
   repoConfig: RenovateConfig
 ): Promise<ProcessResult> {
+  splitInit();
   let config = { ...repoConfig };
   setMeta({ repository: config.repository });
   logger.info({ renovateVersion }, 'Repository started');
@@ -31,10 +35,14 @@ export async function renovateRepository(
     await fs.ensureDir(config.localDir);
     logger.debug('Using localDir: ' + config.localDir);
     config = await initRepo(config);
-    const { res, branches, branchList, packageFiles } = await processRepo(
+    addSplit('init');
+    const { branches, branchList, packageFiles } = await extractDependencies(
       config
     );
     await ensureOnboardingPr(config, packageFiles, branches);
+    const res = await updateRepo(config, branches);
+    addSplit('update');
+    await setBranchCache(branches);
     if (res !== 'automerged') {
       await ensureMasterIssue(config, branches);
     }
@@ -45,10 +53,16 @@ export async function renovateRepository(
     const errorRes = await handleError(config, err);
     repoResult = processResult(config, errorRes);
   }
-  await platform.cleanRepo();
   if (config.localDir && !config.persistRepoData) {
-    await fs.remove(config.localDir);
+    try {
+      await deleteLocalFile('.');
+    } catch (err) /* istanbul ignore if */ {
+      logger.warn({ err }, 'localDir deletion error');
+    }
   }
-  logger.info('Repository finished');
+  const splits = getSplits();
+  logger.debug(splits, 'Repository timing splits (milliseconds)');
+  printRequestStats();
+  logger.info({ durationMs: splits.total }, 'Repository finished');
   return repoResult;
 }

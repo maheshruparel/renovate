@@ -1,10 +1,11 @@
+import { defaultConfig, git, mocked } from '../../../test/util';
+import * as datasourceGitSubmodules from '../../datasource/git-submodules';
 import * as _composer from '../../manager/composer';
-import * as _npm from '../../manager/npm';
 import * as _gitSubmodules from '../../manager/git-submodules';
+import * as _npm from '../../manager/npm';
+import { BranchConfig } from '../common';
 import * as _autoReplace from './auto-replace';
 import { getUpdatedPackageFiles } from './get-updated';
-import { mocked, defaultConfig, platform } from '../../../test/util';
-import * as datasourceGitSubmodules from '../../datasource/git-submodules';
 
 const composer = mocked(_composer);
 const gitSubmodules = mocked(_gitSubmodules);
@@ -14,39 +15,40 @@ const autoReplace = mocked(_autoReplace);
 jest.mock('../../manager/composer');
 jest.mock('../../manager/npm');
 jest.mock('../../manager/git-submodules');
+jest.mock('../../util/git');
 jest.mock('./auto-replace');
 
 describe('workers/branch/get-updated', () => {
   describe('getUpdatedPackageFiles()', () => {
-    let config;
+    let config: BranchConfig;
     beforeEach(() => {
       config = {
         ...defaultConfig,
         upgrades: [],
-      };
+      } as never;
       npm.updateDependency = jest.fn();
-      platform.getFile.mockResolvedValueOnce('existing content');
+      git.getFile.mockResolvedValueOnce('existing content');
     });
     it('handles autoreplace base updated', async () => {
-      config.upgrades.push({ manager: 'html', autoReplace: true });
+      config.upgrades.push({ manager: 'html', branchName: undefined });
       autoReplace.doAutoReplace.mockResolvedValueOnce('updated-file');
       const res = await getUpdatedPackageFiles(config);
       expect(res).toMatchSnapshot();
     });
     it('handles autoreplace branch no update', async () => {
-      config.upgrades.push({ manager: 'html', autoReplace: true });
+      config.upgrades.push({ manager: 'html', branchName: undefined });
       autoReplace.doAutoReplace.mockResolvedValueOnce('existing content');
       const res = await getUpdatedPackageFiles(config);
       expect(res).toMatchSnapshot();
     });
     it('handles autoreplace failure', async () => {
-      config.upgrades.push({ manager: 'html', autoReplace: true });
+      config.upgrades.push({ manager: 'html', branchName: undefined });
       autoReplace.doAutoReplace.mockResolvedValueOnce(null);
       await expect(getUpdatedPackageFiles(config)).rejects.toThrow();
     });
     it('handles autoreplace branch needs update', async () => {
-      config.parentBranch = 'some branch';
-      config.upgrades.push({ manager: 'html', autoReplace: true });
+      config.reuseExistingBranch = true;
+      config.upgrades.push({ manager: 'html', branchName: undefined });
       autoReplace.doAutoReplace.mockResolvedValueOnce(null);
       autoReplace.doAutoReplace.mockResolvedValueOnce('updated-file');
       const res = await getUpdatedPackageFiles(config);
@@ -57,27 +59,28 @@ describe('workers/branch/get-updated', () => {
       expect(res).toMatchSnapshot();
     });
     it('handles null content', async () => {
-      config.parentBranch = 'some-branch';
+      config.reuseExistingBranch = true;
       config.upgrades.push({
         manager: 'npm',
-      });
+      } as never);
       await expect(getUpdatedPackageFiles(config)).rejects.toThrow();
     });
     it('handles content change', async () => {
-      config.parentBranch = 'some-branch';
+      config.reuseExistingBranch = true;
       config.upgrades.push({
         manager: 'npm',
-      });
+      } as never);
       npm.updateDependency.mockReturnValue('some new content');
       const res = await getUpdatedPackageFiles(config);
       expect(res).toMatchSnapshot();
     });
     it('handles lock files', async () => {
-      config.parentBranch = 'some-branch';
+      config.reuseExistingBranch = true;
       config.upgrades.push({
         manager: 'composer',
+        branchName: undefined,
       });
-      composer.updateDependency.mockReturnValue('some new content');
+      autoReplace.doAutoReplace.mockResolvedValueOnce('some new content');
       composer.updateArtifacts.mockResolvedValueOnce([
         {
           file: {
@@ -90,11 +93,10 @@ describe('workers/branch/get-updated', () => {
       expect(res).toMatchSnapshot();
     });
     it('handles lockFileMaintenance', async () => {
-      // config.parentBranch = 'some-branch';
       config.upgrades.push({
         manager: 'composer',
         updateType: 'lockFileMaintenance',
-      });
+      } as never);
       composer.updateArtifacts.mockResolvedValueOnce([
         {
           file: {
@@ -107,11 +109,10 @@ describe('workers/branch/get-updated', () => {
       expect(res).toMatchSnapshot();
     });
     it('handles lockFileMaintenance error', async () => {
-      // config.parentBranch = 'some-branch';
       config.upgrades.push({
         manager: 'composer',
         updateType: 'lockFileMaintenance',
-      });
+      } as never);
       composer.updateArtifacts.mockResolvedValueOnce([
         {
           artifactError: {
@@ -124,11 +125,12 @@ describe('workers/branch/get-updated', () => {
       expect(res).toMatchSnapshot();
     });
     it('handles lock file errors', async () => {
-      config.parentBranch = 'some-branch';
+      config.reuseExistingBranch = true;
       config.upgrades.push({
         manager: 'composer',
+        branchName: undefined,
       });
-      composer.updateDependency.mockReturnValue('some new content');
+      autoReplace.doAutoReplace.mockResolvedValueOnce('some new content');
       composer.updateArtifacts.mockResolvedValueOnce([
         {
           artifactError: {
@@ -144,10 +146,50 @@ describe('workers/branch/get-updated', () => {
       config.upgrades.push({
         manager: 'git-submodules',
         datasource: datasourceGitSubmodules.id,
-      });
+      } as never);
       gitSubmodules.updateDependency.mockResolvedValueOnce('existing content');
       const res = await getUpdatedPackageFiles(config);
       expect(res).toMatchSnapshot();
+    });
+    it('update artifacts on update-lockfile strategy', async () => {
+      config.upgrades.push({
+        manager: 'composer',
+        branchName: undefined,
+        rangeStrategy: 'update-lockfile',
+      });
+      autoReplace.doAutoReplace.mockResolvedValueOnce('existing content');
+      composer.updateArtifacts.mockResolvedValueOnce([
+        {
+          file: {
+            name: 'composer.lock',
+            contents: 'some contents',
+          },
+        },
+      ]);
+      const res = await getUpdatedPackageFiles(config);
+      expect(res).toMatchSnapshot();
+      expect(res.updatedPackageFiles).toHaveLength(1);
+    });
+    it(' does not update artifacts on update-lockfile if packageFile already updated', async () => {
+      config.upgrades.push({
+        manager: 'composer',
+        branchName: undefined,
+        rangeStrategy: 'update-lockfile',
+        currentValue: '^1.0.0',
+        newValue: '^2.0.0',
+      });
+      autoReplace.doAutoReplace.mockResolvedValueOnce('existing content');
+      composer.updateArtifacts.mockResolvedValueOnce([
+        {
+          file: {
+            name: 'composer.lock',
+            contents: 'some contents',
+          },
+        },
+      ]);
+      const res = await getUpdatedPackageFiles(config);
+      expect(res).toMatchSnapshot();
+      expect(res.updatedPackageFiles).toHaveLength(0);
     });
   });
 });

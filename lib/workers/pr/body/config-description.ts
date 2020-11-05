@@ -1,7 +1,7 @@
 import { platform } from '../../../platform';
+import { BranchStatus } from '../../../types';
 import { emojify } from '../../../util/emoji';
 import { BranchConfig } from '../../common';
-import { BranchStatus } from '../../../types';
 
 export async function getPrConfigDescription(
   config: BranchConfig
@@ -13,7 +13,7 @@ export async function getPrConfigDescription(
     (config.schedule as never) !== 'at any time' &&
     config.schedule[0] !== 'at any time'
   ) {
-    prBody += `"${config.schedule}"`;
+    prBody += `"${String(config.schedule)}"`;
     if (config.timezone) {
       prBody += ` in timezone ${config.timezone}.`;
     } else {

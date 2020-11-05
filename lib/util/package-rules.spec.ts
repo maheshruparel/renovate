@@ -1,4 +1,3 @@
-import { applyPackageRules, Config } from './package-rules';
 import { UpdateType } from '../config';
 import {
   LANGUAGE_DOCKER,
@@ -9,6 +8,7 @@ import {
 
 import * as datasourceDocker from '../datasource/docker';
 import * as datasourceOrb from '../datasource/orb';
+import { Config, applyPackageRules } from './package-rules';
 
 type TestConfig = Config & { x?: number; y?: number };
 
@@ -109,6 +109,23 @@ describe('applyPackageRules()', () => {
     expect(res.x).toBeUndefined();
     expect(res.y).toBeUndefined();
   });
+  it('ignores patterns if lock file maintenance', () => {
+    const dep = {
+      enabled: true,
+      packagePatterns: ['.*'],
+      updateType: 'lockFileMaintenance' as UpdateType,
+      packageRules: [
+        {
+          excludePackagePatterns: ['^foo'],
+          enabled: false,
+        },
+      ],
+    };
+    const res = applyPackageRules(dep);
+    expect(res.enabled).toBe(true);
+    const res2 = applyPackageRules({ ...dep, depName: 'anything' });
+    expect(res2.enabled).toBe(false);
+  });
   it('matches anything if missing inclusive rules', () => {
     const config: TestConfig = {
       packageRules: [
@@ -147,7 +164,7 @@ describe('applyPackageRules()', () => {
     });
     expect(res2.x).toBeDefined();
   });
-  it('filters depType', () => {
+  it('filters requested depType', () => {
     const config: TestConfig = {
       packageRules: [
         {
@@ -164,7 +181,7 @@ describe('applyPackageRules()', () => {
     const res = applyPackageRules({ ...config, ...dep });
     expect(res.x).toBe(1);
   });
-  it('filters depTypes', () => {
+  it('filters from list of requested depTypes', () => {
     const config: TestConfig = {
       packageRules: [
         {
@@ -418,7 +435,7 @@ describe('applyPackageRules()', () => {
     const res = applyPackageRules({ ...config, ...dep });
     expect(res.x).toBe(1);
   });
-  it('filters depType', () => {
+  it('filters out unrequested depType', () => {
     const config: TestConfig = {
       packageRules: [
         {

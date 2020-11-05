@@ -1,9 +1,9 @@
-import { readdir, readFile } from 'fs-extra';
+import { readFile, readdir } from 'fs-extra';
 
 describe('versioning metadata', () => {
   it('readme no markdown headers', async () => {
     const allVersioning = (await readdir('lib/versioning')).filter(
-      item => !item.includes('.')
+      (item) => !item.includes('.')
     );
     for (const versioning of allVersioning) {
       let readme: string;
@@ -16,13 +16,14 @@ describe('versioning metadata', () => {
         // ignore missing file
       }
       if (readme) {
-        expect(RegExp(/(^|\n)#+ /).exec(readme)).toBe(null);
+        // eslint-disable-next-line jest/no-conditional-expect
+        expect(RegExp(/(^|\n)#+ /).exec(readme)).toBeNull();
       }
     }
   });
   it('contains mandatory fields', async () => {
     const allVersioning = (await readdir('lib/versioning')).filter(
-      item => !item.includes('.') && !item.startsWith('_')
+      (item) => !item.includes('.') && !item.startsWith('_')
     );
 
     for (const versioning of allVersioning) {
@@ -32,6 +33,7 @@ describe('versioning metadata', () => {
       expect(versioningObj.urls).toBeDefined();
       expect(versioningObj.supportsRanges).toBeDefined();
       if (versioningObj.supportsRanges === true) {
+        // eslint-disable-next-line jest/no-conditional-expect
         expect(versioningObj.supportedRangeStrategies).toBeDefined();
       }
     }

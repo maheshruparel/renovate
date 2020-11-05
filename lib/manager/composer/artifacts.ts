@@ -1,18 +1,94 @@
+import url from 'url';
 import is from '@sindresorhus/is';
-import URL from 'url';
-import fs from 'fs-extra';
+import { quote } from 'shlex';
 import upath from 'upath';
-import { exec, ExecOptions } from '../../util/exec';
-import { UpdateArtifact, UpdateArtifactsResult } from '../common';
-import { logger } from '../../logger';
-import * as hostRules from '../../util/host-rules';
-import { platform } from '../../platform';
 import { SYSTEM_INSUFFICIENT_DISK_SPACE } from '../../constants/error-messages';
-import * as datasourcePackagist from '../../datasource/packagist';
 import {
   PLATFORM_TYPE_GITHUB,
   PLATFORM_TYPE_GITLAB,
 } from '../../constants/platforms';
+import * as datasourcePackagist from '../../datasource/packagist';
+import { logger } from '../../logger';
+import { HostRule } from '../../types';
+import { ExecOptions, exec } from '../../util/exec';
+import {
+  deleteLocalFile,
+  ensureDir,
+  ensureLocalDir,
+  getSiblingFileName,
+  readLocalFile,
+  writeLocalFile,
+} from '../../util/fs';
+import { getRepoStatus } from '../../util/git';
+import * as hostRules from '../../util/host-rules';
+import { UpdateArtifact, UpdateArtifactsResult } from '../common';
+
+interface UserPass {
+  username: string;
+  password: string;
+}
+
+interface AuthJson {
+  'github-oauth'?: Record<string, string>;
+  'gitlab-token'?: Record<string, string>;
+  'http-basic'?: Record<string, UserPass>;
+}
+
+function getHost({
+  hostName,
+  domainName,
+  endpoint,
+  baseUrl,
+}: HostRule): string | null {
+  let host = hostName || domainName;
+  if (!host) {
+    try {
+      host = endpoint || baseUrl;
+      host = url.parse(host).host;
+    } catch (err) {
+      logger.warn(`Composer: can't parse ${host}`);
+      host = null;
+    }
+  }
+  return host;
+}
+
+function getAuthJson(): string | null {
+  const authJson: AuthJson = {};
+
+  const githubCredentials = hostRules.find({
+    hostType: PLATFORM_TYPE_GITHUB,
+    url: 'https://api.github.com/',
+  });
+  if (githubCredentials?.token) {
+    authJson['github-oauth'] = {
+      'github.com': githubCredentials.token.replace('x-access-token:', ''),
+    };
+  }
+
+  const gitlabCredentials = hostRules.find({
+    hostType: PLATFORM_TYPE_GITLAB,
+    url: 'https://gitlab.com/api/v4/',
+  });
+  if (gitlabCredentials?.token) {
+    authJson['gitlab-token'] = {
+      'gitlab.com': gitlabCredentials.token,
+    };
+  }
+
+  hostRules
+    .findAll({ hostType: datasourcePackagist.id })
+    ?.forEach((hostRule) => {
+      const { username, password } = hostRule;
+      const host = getHost(hostRule);
+      if (host && username && password) {
+        authJson['http-basic'] = authJson['http-basic'] || {};
+        authJson['http-basic'][host] = { username, password };
+      }
+    });
+
+  return is.emptyObject(authJson) ? null : JSON.stringify(authJson);
+}
 
 export async function updateArtifacts({
   packageFileName,
@@ -25,105 +101,51 @@ export async function updateArtifacts({
   const cacheDir =
     process.env.COMPOSER_CACHE_DIR ||
     upath.join(config.cacheDir, './others/composer');
-  await fs.ensureDir(cacheDir);
+  await ensureDir(cacheDir);
   logger.debug(`Using composer cache ${cacheDir}`);
 
   const lockFileName = packageFileName.replace(/\.json$/, '.lock');
-  const existingLockFileContent = await platform.getFile(lockFileName);
+  const existingLockFileContent = await readLocalFile(lockFileName);
   if (!existingLockFileContent) {
     logger.debug('No composer.lock found');
     return null;
   }
-  const cwd = upath.join(config.localDir, upath.dirname(packageFileName));
-  await fs.ensureDir(upath.join(cwd, 'vendor'));
+  await ensureLocalDir(getSiblingFileName(packageFileName, 'vendor'));
   try {
-    const localPackageFileName = upath.join(config.localDir, packageFileName);
-    await fs.outputFile(localPackageFileName, newPackageFileContent);
-    const localLockFileName = upath.join(config.localDir, lockFileName);
+    await writeLocalFile(packageFileName, newPackageFileContent);
     if (config.isLockFileMaintenance) {
-      await fs.remove(localLockFileName);
+      await deleteLocalFile(lockFileName);
     }
-    const authJson = {};
-    let credentials = hostRules.find({
-      hostType: PLATFORM_TYPE_GITHUB,
-      url: 'https://api.github.com/',
-    });
-    // istanbul ignore if
-    if (credentials && credentials.token) {
-      authJson['github-oauth'] = {
-        'github.com': credentials.token,
-      };
-    }
-    credentials = hostRules.find({
-      hostType: PLATFORM_TYPE_GITLAB,
-      url: 'https://gitlab.com/api/v4/',
-    });
-    // istanbul ignore if
-    if (credentials && credentials.token) {
-      authJson['gitlab-token'] = {
-        'gitlab.com': credentials.token,
-      };
-    }
-    try {
-      // istanbul ignore else
-      if (is.array(config.registryUrls)) {
-        for (const regUrl of config.registryUrls) {
-          if (regUrl) {
-            const { host } = URL.parse(regUrl);
-            const hostRule = hostRules.find({
-              hostType: datasourcePackagist.id,
-              url: regUrl,
-            });
-            // istanbul ignore else
-            if (hostRule.username && hostRule.password) {
-              logger.debug('Setting packagist auth for host ' + host);
-              authJson['http-basic'] = authJson['http-basic'] || {};
-              authJson['http-basic'][host] = {
-                username: hostRule.username,
-                password: hostRule.password,
-              };
-            } else {
-              logger.debug('No packagist auth found for ' + regUrl);
-            }
-          }
-        }
-      } else if (config.registryUrls) {
-        logger.warn(
-          { registryUrls: config.registryUrls },
-          'Non-array composer registryUrls'
-        );
-      }
-    } catch (err) /* istanbul ignore next */ {
-      logger.warn({ err }, 'Error setting registryUrls auth for composer');
-    }
-    if (authJson) {
-      const localAuthFileName = upath.join(cwd, 'auth.json');
-      await fs.outputFile(localAuthFileName, JSON.stringify(authJson));
-    }
+
     const execOptions: ExecOptions = {
-      cwd,
+      cwdFile: packageFileName,
       extraEnv: {
         COMPOSER_CACHE_DIR: cacheDir,
+        COMPOSER_AUTH: getAuthJson(),
       },
       docker: {
         image: 'renovate/composer',
       },
     };
     const cmd = 'composer';
-    let args;
+    let args: string;
     if (config.isLockFileMaintenance) {
       args = 'install';
     } else {
       args =
-        ('update ' + updatedDeps.join(' ')).trim() + ' --with-dependencies';
+        ('update ' + updatedDeps.map(quote).join(' ')).trim() +
+        ' --with-dependencies';
     }
-    args += ' --ignore-platform-reqs --no-ansi --no-interaction';
+    if (config.composerIgnorePlatformReqs) {
+      args += ' --ignore-platform-reqs';
+    }
+    args += ' --no-ansi --no-interaction';
     if (global.trustLevel !== 'high' || config.ignoreScripts) {
       args += ' --no-scripts --no-autoloader';
     }
     logger.debug({ cmd, args }, 'composer command');
     await exec(`${cmd} ${args}`, execOptions);
-    const status = await platform.getRepoStatus();
+    const status = await getRepoStatus();
     if (!status.modified.includes(lockFileName)) {
       return null;
     }
@@ -132,22 +154,18 @@ export async function updateArtifacts({
       {
         file: {
           name: lockFileName,
-          contents: await fs.readFile(localLockFileName, 'utf8'),
+          contents: await readLocalFile(lockFileName),
         },
       },
     ];
   } catch (err) {
     if (
-      err.message &&
-      err.message.includes(
+      err.message?.includes(
         'Your requirements could not be resolved to an installable set of packages.'
       )
     ) {
       logger.info('Composer requirements cannot be resolved');
-    } else if (
-      err.message &&
-      err.message.includes('write error (disk full?)')
-    ) {
+    } else if (err.message?.includes('write error (disk full?)')) {
       throw new Error(SYSTEM_INSUFFICIENT_DISK_SPACE);
     } else {
       logger.debug({ err }, 'Failed to generate composer.lock');

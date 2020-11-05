@@ -1,14 +1,88 @@
+import { parse } from '@iarna/toml';
 import is from '@sindresorhus/is';
-import fs from 'fs-extra';
-import { exec, ExecOptions } from '../../util/exec';
+import { quote } from 'shlex';
 import { logger } from '../../logger';
-import { UpdateArtifact, UpdateArtifactsResult } from '../common';
+import { ExecOptions, exec } from '../../util/exec';
 import {
+  deleteLocalFile,
   getSiblingFileName,
   readLocalFile,
   writeLocalFile,
 } from '../../util/fs';
+import { find } from '../../util/host-rules';
+import {
+  UpdateArtifact,
+  UpdateArtifactsConfig,
+  UpdateArtifactsResult,
+} from '../common';
+import { PoetryFile, PoetrySource } from './types';
 
+function getPythonConstraint(
+  existingLockFileContent: string,
+  config: UpdateArtifactsConfig
+): string | undefined | null {
+  const { constraints = {} } = config;
+  const { python } = constraints;
+
+  if (python) {
+    logger.debug('Using python constraint from config');
+    return python;
+  }
+  try {
+    const data = parse(existingLockFileContent);
+    if (data?.metadata?.['python-versions']) {
+      return data?.metadata?.['python-versions'];
+    }
+  } catch (err) {
+    // Do nothing
+  }
+  return undefined;
+}
+
+function getPoetrySources(content: string, fileName: string): PoetrySource[] {
+  let pyprojectFile: PoetryFile;
+  try {
+    pyprojectFile = parse(content);
+  } catch (err) {
+    logger.debug({ err }, 'Error parsing pyproject.toml file');
+    return [];
+  }
+  if (!pyprojectFile.tool?.poetry) {
+    logger.debug(`{$fileName} contains no poetry section`);
+    return [];
+  }
+
+  const sources = pyprojectFile.tool?.poetry?.source || [];
+  const sourceArray: PoetrySource[] = [];
+  for (const source of sources) {
+    if (source.name && source.url) {
+      sourceArray.push({ name: source.name, url: source.url });
+    }
+  }
+  return sourceArray;
+}
+
+function getSourceCredentialVars(
+  pyprojectContent: string,
+  packageFileName: string
+): Record<string, string> {
+  const poetrySources = getPoetrySources(pyprojectContent, packageFileName);
+  const envVars: Record<string, string> = {};
+
+  for (const source of poetrySources) {
+    const matchingHostRule = find({ url: source.url });
+    const formattedSourceName = source.name.toUpperCase();
+    if (matchingHostRule.username) {
+      envVars[`POETRY_HTTP_BASIC_${formattedSourceName}_USERNAME`] =
+        matchingHostRule.username;
+    }
+    if (matchingHostRule.password) {
+      envVars[`POETRY_HTTP_BASIC_${formattedSourceName}_PASSWORD`] =
+        matchingHostRule.password;
+    }
+  }
+  return envVars;
+}
 export async function updateArtifacts({
   packageFileName,
   updatedDeps,
@@ -22,11 +96,11 @@ export async function updateArtifacts({
   }
   // Try poetry.lock first
   let lockFileName = getSiblingFileName(packageFileName, 'poetry.lock');
-  let existingLockFileContent = await readLocalFile(lockFileName);
+  let existingLockFileContent = await readLocalFile(lockFileName, 'utf8');
   if (!existingLockFileContent) {
     // Try pyproject.lock next
     lockFileName = getSiblingFileName(packageFileName, 'pyproject.lock');
-    existingLockFileContent = await readLocalFile(lockFileName);
+    existingLockFileContent = await readLocalFile(lockFileName, 'utf8');
     if (!existingLockFileContent) {
       logger.debug(`No lock file found`);
       return null;
@@ -37,20 +111,34 @@ export async function updateArtifacts({
     await writeLocalFile(packageFileName, newPackageFileContent);
     const cmd: string[] = [];
     if (config.isLockFileMaintenance) {
-      await fs.remove(lockFileName);
+      await deleteLocalFile(lockFileName);
       cmd.push('poetry update --lock --no-interaction');
     } else {
       for (let i = 0; i < updatedDeps.length; i += 1) {
         const dep = updatedDeps[i];
-        cmd.push(`poetry update --lock --no-interaction ${dep}`);
+        cmd.push(`poetry update --lock --no-interaction ${quote(dep)}`);
       }
     }
+    const tagConstraint = getPythonConstraint(existingLockFileContent, config);
+    const poetryRequirement = config.constraints?.poetry || 'poetry';
+    const poetryInstall = 'pip install ' + quote(poetryRequirement);
+    const extraEnv = getSourceCredentialVars(
+      newPackageFileContent,
+      packageFileName
+    );
+
     const execOptions: ExecOptions = {
       cwdFile: packageFileName,
-      docker: { image: 'renovate/poetry' },
+      extraEnv,
+      docker: {
+        image: 'renovate/python',
+        tagConstraint,
+        tagScheme: 'poetry',
+        preCommands: [poetryInstall],
+      },
     };
     await exec(cmd, execOptions);
-    const newPoetryLockContent = await readLocalFile(lockFileName);
+    const newPoetryLockContent = await readLocalFile(lockFileName, 'utf8');
     if (existingLockFileContent === newPoetryLockContent) {
       logger.debug(`${lockFileName} is unchanged`);
       return null;
@@ -70,7 +158,7 @@ export async function updateArtifacts({
       {
         artifactError: {
           lockFile: lockFileName,
-          stderr: err.stdout + '\n' + err.stderr,
+          stderr: `${String(err.stdout)}\n${String(err.stderr)}`,
         },
       },
     ];

@@ -1,6 +1,6 @@
 import is from '@sindresorhus/is';
 import { clone } from '../util/clone';
-import { RenovateConfig, UpdateType, PackageRule } from './common';
+import { PackageRule, RenovateConfig, UpdateType } from './common';
 import { getOptions } from './definitions';
 
 const options = getOptions();
@@ -11,7 +11,7 @@ let allowedStrings: string[];
 export function massageConfig(config: RenovateConfig): RenovateConfig {
   if (!allowedStrings) {
     allowedStrings = [];
-    options.forEach(option => {
+    options.forEach((option) => {
       if (option.allowString) {
         allowedStrings.push(option.name);
       }
@@ -26,13 +26,13 @@ export function massageConfig(config: RenovateConfig): RenovateConfig {
       delete massagedConfig.npmToken;
     } else if (is.array(val)) {
       massagedConfig[key] = [];
-      val.forEach(item => {
+      val.forEach((item) => {
         if (is.object(item)) {
           (massagedConfig[key] as RenovateConfig[]).push(
             massageConfig(item as RenovateConfig)
           );
         } else {
-          (massagedConfig[key] as RenovateConfig[]).push(item);
+          (massagedConfig[key] as unknown[]).push(item);
         }
       });
     } else if (is.object(val) && key !== 'encrypted') {
@@ -66,7 +66,7 @@ export function massageConfig(config: RenovateConfig): RenovateConfig {
       }
     }
     for (const rule of newRules) {
-      updateTypes.forEach(updateType => {
+      updateTypes.forEach((updateType) => {
         delete rule[updateType];
       });
     }

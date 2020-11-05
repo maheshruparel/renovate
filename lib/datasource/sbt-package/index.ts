@@ -1,14 +1,19 @@
+import { XmlDocument } from 'xmldoc';
+import { logger } from '../../logger';
 import { compare } from '../../versioning/maven/compare';
+import { GetReleasesConfig, ReleaseResult } from '../common';
+import { MAVEN_REPO } from '../maven/common';
 import { downloadHttpProtocol } from '../maven/util';
 import { parseIndexDir } from '../sbt-plugin/util';
-import { logger } from '../../logger';
-import { GetReleasesConfig, ReleaseResult } from '../common';
 
 export const id = 'sbt-package';
 
+export const defaultRegistryUrls = [MAVEN_REPO];
+export const registryStrategy = 'hunt';
+
 const ensureTrailingSlash = (str: string): string => str.replace(/\/?$/, '/');
 
-export async function resolvePackageReleases(
+export async function getArtifactSubdirs(
   searchRoot: string,
   artifact: string,
   scalaVersion: string
@@ -18,9 +23,8 @@ export async function resolvePackageReleases(
     'sbt'
   );
   if (indexContent) {
-    const releases: string[] = [];
     const parseSubdirs = (content: string): string[] =>
-      parseIndexDir(content, x => {
+      parseIndexDir(content, (x) => {
         if (x === artifact) {
           return true;
         }
@@ -32,24 +36,35 @@ export async function resolvePackageReleases(
         }
         return x.startsWith(`${artifact}_`);
       });
-    const artifactSubdirs = parseSubdirs(indexContent);
-    let searchSubdirs = artifactSubdirs;
+    let artifactSubdirs = parseSubdirs(indexContent);
     if (
       scalaVersion &&
       artifactSubdirs.includes(`${artifact}_${scalaVersion}`)
     ) {
-      searchSubdirs = [`${artifact}_${scalaVersion}`];
+      artifactSubdirs = [`${artifact}_${scalaVersion}`];
     }
+    return artifactSubdirs;
+  }
+
+  return null;
+}
+
+export async function getPackageReleases(
+  searchRoot: string,
+  artifactSubdirs: string[]
+): Promise<string[]> {
+  if (artifactSubdirs) {
+    const releases: string[] = [];
     const parseReleases = (content: string): string[] =>
-      parseIndexDir(content, x => !/^\.+$/.test(x));
-    for (const searchSubdir of searchSubdirs) {
+      parseIndexDir(content, (x) => !/^\.+$/.test(x));
+    for (const searchSubdir of artifactSubdirs) {
       const content = await downloadHttpProtocol(
         ensureTrailingSlash(`${searchRoot}/${searchSubdir}`),
         'sbt'
       );
       if (content) {
         const subdirReleases = parseReleases(content);
-        subdirReleases.forEach(x => releases.push(x));
+        subdirReleases.forEach((x) => releases.push(x));
       }
     }
     if (releases.length) {
@@ -60,40 +75,102 @@ export async function resolvePackageReleases(
   return null;
 }
 
-export async function getPkgReleases({
+export function getLatestVersion(versions: string[]): string | null {
+  if (versions?.length) {
+    return versions.reduce((latestVersion, version) =>
+      compare(version, latestVersion) === 1 ? version : latestVersion
+    );
+  }
+  return null;
+}
+
+export async function getUrls(
+  searchRoot: string,
+  artifactDirs: string[],
+  version: string
+): Promise<Partial<ReleaseResult>> {
+  const result: Partial<ReleaseResult> = {};
+
+  if (!artifactDirs?.length) {
+    return result;
+  }
+
+  if (!version) {
+    return result;
+  }
+
+  for (const artifactDir of artifactDirs) {
+    const [artifact] = artifactDir.split('_');
+    const pomFileNames = [
+      `${artifactDir}-${version}.pom`,
+      `${artifact}-${version}.pom`,
+    ];
+
+    for (const pomFileName of pomFileNames) {
+      const pomUrl = `${searchRoot}/${artifactDir}/${version}/${pomFileName}`;
+      const content = await downloadHttpProtocol(pomUrl, 'sbt');
+
+      if (content) {
+        const pomXml = new XmlDocument(content);
+
+        const homepage = pomXml.valueWithPath('url');
+        if (homepage) {
+          result.homepage = homepage;
+        }
+
+        const sourceUrl = pomXml.valueWithPath('scm.url');
+        if (sourceUrl) {
+          result.sourceUrl = sourceUrl
+            .replace(/^scm:/, '')
+            .replace(/^git:/, '')
+            .replace(/^git@github.com:/, 'https://github.com/')
+            .replace(/\.git$/, '');
+        }
+
+        return result;
+      }
+    }
+  }
+
+  return result;
+}
+
+export async function getReleases({
   lookupName,
-  registryUrls,
+  registryUrl,
 }: GetReleasesConfig): Promise<ReleaseResult | null> {
   const [groupId, artifactId] = lookupName.split(':');
   const groupIdSplit = groupId.split('.');
   const artifactIdSplit = artifactId.split('_');
   const [artifact, scalaVersion] = artifactIdSplit;
 
-  const repoRoots = registryUrls.map(x => x.replace(/\/?$/, ''));
+  const repoRoot = ensureTrailingSlash(registryUrl);
   const searchRoots: string[] = [];
-  repoRoots.forEach(repoRoot => {
-    // Optimize lookup order
-    searchRoots.push(`${repoRoot}/${groupIdSplit.join('/')}`);
-    searchRoots.push(`${repoRoot}/${groupIdSplit.join('.')}`);
-  });
+  // Optimize lookup order
+  searchRoots.push(`${repoRoot}${groupIdSplit.join('/')}`);
+  searchRoots.push(`${repoRoot}${groupIdSplit.join('.')}`);
 
   for (let idx = 0; idx < searchRoots.length; idx += 1) {
     const searchRoot = searchRoots[idx];
-    const versions = await resolvePackageReleases(
+    const artifactSubdirs = await getArtifactSubdirs(
       searchRoot,
       artifact,
       scalaVersion
     );
+    const versions = await getPackageReleases(searchRoot, artifactSubdirs);
+    const latestVersion = getLatestVersion(versions);
+    const urls = await getUrls(searchRoot, artifactSubdirs, latestVersion);
 
     const dependencyUrl = searchRoot;
 
     if (versions) {
       return {
+        ...urls,
         display: lookupName,
         group: groupId,
         name: artifactId,
         dependencyUrl,
-        releases: versions.map(v => ({ version: v })),
+        releases: versions.map((v) => ({ version: v })),
       };
     }
   }

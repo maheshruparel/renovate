@@ -1,6 +1,6 @@
 import { logger } from '../../logger';
+import { PackageDependency, PackageFile } from '../common';
 import { getDep } from '../dockerfile/extract';
-import { PackageFile, PackageDependency } from '../common';
 
 export function extractPackageFile(content: string): PackageFile | null {
   const deps: PackageDependency[] = [];
@@ -21,7 +21,6 @@ export function extractPackageFile(content: string): PackageFile | null {
           'DroneCI docker image'
         );
         dep.depType = 'docker';
-        dep.managerData = { lineNumber };
         deps.push(dep);
       }
     }

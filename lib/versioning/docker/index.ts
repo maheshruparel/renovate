@@ -1,5 +1,5 @@
-import * as generic from '../loose/generic';
 import { VersioningApi } from '../common';
+import * as generic from '../loose/generic';
 
 export const id = 'docker';
 export const displayName = 'Docker';
@@ -8,16 +8,25 @@ export const urls = [
 ];
 export const supportsRanges = false;
 
-function parse(version: string): any {
+const versionPattern = /^(?<version>\d+(?:\.\d+)*)(?<prerelease>.*)$/;
+const commitHashPattern = /^[a-f0-9]{7,40}$/;
+const numericPattern = /^[0-9]+$/;
+
+function parse(version: string): generic.GenericVersion {
+  if (commitHashPattern.test(version) && !numericPattern.test(version)) {
+    return null;
+  }
   const versionPieces = version.replace(/^v/, '').split('-');
   const prefix = versionPieces.shift();
   const suffix = versionPieces.join('-');
-  const release = prefix.split('.').map(Number);
-  // eslint-disable-next-line @typescript-eslint/unbound-method
-  if (release.some(Number.isNaN)) {
+  const m = versionPattern.exec(prefix);
+  if (!m?.groups) {
     return null;
   }
-  return { release, suffix };
+
+  const { version: ver, prerelease } = m.groups;
+  const release = ver.split('.').map(Number);
+  return { release, suffix, prerelease };
 }
 
 function valueToVersion(value: string): string {
@@ -25,9 +34,9 @@ function valueToVersion(value: string): string {
   return value ? value.split('-')[0] : value;
 }
 
-function compare(version1: string, vervion2: string): number {
+function compare(version1: string, version2: string): number {
   const parsed1 = parse(version1);
-  const parsed2 = parse(vervion2);
+  const parsed2 = parse(version2);
   // istanbul ignore if
   if (!(parsed1 && parsed2)) {
     return 1;
@@ -46,6 +55,17 @@ function compare(version1: string, vervion2: string): number {
     if (part1 !== part2) {
       return part1 - part2;
     }
+  }
+  if (parsed1.prerelease !== parsed2.prerelease) {
+    // unstable is lower
+    if (!parsed1.prerelease && parsed2.prerelease) {
+      return 1;
+    }
+    if (parsed1.prerelease && !parsed2.prerelease) {
+      return -1;
+    }
+    // alphabetic order
+    return parsed1.prerelease.localeCompare(parsed2.prerelease);
   }
   // equals
   return parsed2.suffix.localeCompare(parsed1.suffix);

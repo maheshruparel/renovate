@@ -1,30 +1,40 @@
-import { Merge } from 'type-fest';
-import { PackageDependency, ArtifactError } from '../manager/common';
+import type { Merge } from 'type-fest';
 import {
-  RenovateSharedConfig,
-  RenovateConfig,
   GroupConfig,
   RenovateAdminConfig,
+  RenovateConfig,
+  RenovateSharedConfig,
   ValidationMessage,
 } from '../config';
-import { LookupUpdate } from './repository/process/lookup/common';
-import { FileData, PlatformPrOptions } from '../platform';
 import { Release } from '../datasource';
+import {
+  ArtifactError,
+  LookupUpdate,
+  PackageDependency,
+  PackageFile,
+} from '../manager/common';
+import { PlatformPrOptions } from '../platform';
+import { File } from '../util/git';
+import { ChangeLogResult } from './pr/changelog/common';
 
 export interface BranchUpgradeConfig
   extends Merge<RenovateConfig, PackageDependency>,
     Partial<LookupUpdate>,
     RenovateSharedConfig {
   artifactErrors?: ArtifactError[];
+  autoReplaceStringTemplate?: string;
+  baseDeps?: PackageDependency[];
   branchName: string;
+  commitBody?: string;
   commitMessage?: string;
+  commitMessageExtra?: string;
   currentDigest?: string;
   currentDigestShort?: string;
   currentValue?: string;
   currentVersion?: string;
-
   endpoint?: string;
   excludeCommitPaths?: string[];
+  githubName?: string;
   group?: GroupConfig;
 
   groupName?: string;
@@ -33,56 +43,76 @@ export interface BranchUpgradeConfig
   manager?: string;
   packageFile?: string;
 
-  parentBranch?: string;
+  reuseExistingBranch?: boolean;
+  prHeader?: string;
+  prFooter?: string;
   prBodyNotes?: string[];
+  prBodyTemplate?: string;
   prPriority?: number;
   prTitle?: string;
   releases?: Release[];
   releaseTimestamp?: string;
+  repoName?: string;
 
   sourceDirectory?: string;
-  updatedPackageFiles?: FileData[];
-  updatedArtifacts?: FileData[];
+
+  updatedPackageFiles?: File[];
+  updatedArtifacts?: File[];
+
+  logJSON?: ChangeLogResult;
+
+  homepage?: string;
+  changelogUrl?: string;
+  dependencyUrl?: string;
+  sourceUrl?: string;
 }
 
 export enum PrResult {
   AwaitingApproval = 'AwaitingApproval',
   AwaitingGreenBranch = 'AwaitingGreenBranch',
   AwaitingNotPending = 'AwaitingNotPending',
-  BlockeddByBranchAutomerge = 'BlockeddByBranchAutomerge',
+  BlockedByBranchAutomerge = 'BlockedByBranchAutomerge',
   Created = 'Created',
   Error = 'Error',
   ErrorAlreadyExists = 'ErrorAlreadyExists',
   NotUpdated = 'NotUpdated',
   Updated = 'Updated',
+  LimitReached = 'LimitReached',
 }
 
-export type ProcessBranchResult =
-  | 'already-existed'
-  | 'automerged'
-  | 'done'
-  | 'error'
-  | 'needs-approval'
-  | 'needs-pr-approval'
-  | 'not-scheduled'
-  | 'no-work'
-  | 'pending'
-  | 'pr-created'
-  | 'pr-edited'
-  | 'pr-hourly-limit-reached'
-  | 'rebase';
+export enum ProcessBranchResult {
+  AlreadyExisted = 'already-existed',
+  Automerged = 'automerged',
+  Done = 'done',
+  Error = 'error',
+  NeedsApproval = 'needs-approval',
+  NeedsPrApproval = 'needs-pr-approval',
+  NotScheduled = 'not-scheduled',
+  NoWork = 'no-work',
+  Pending = 'pending',
+  PrCreated = 'pr-created',
+  PrEdited = 'pr-edited',
+  PrLimitReached = 'pr-limit-reached',
+  CommitLimitReached = 'commit-limit-reached',
+  Rebase = 'rebase',
+}
 
 export interface BranchConfig
   extends BranchUpgradeConfig,
     RenovateAdminConfig,
     PlatformPrOptions {
+  automergeComment?: string;
   automergeType?: string;
   baseBranch?: string;
   canBeUnpublished?: boolean;
   errors?: ValidationMessage[];
   hasTypes?: boolean;
+  dependencyDashboardChecks?: Record<string, string>;
   releaseTimestamp?: string;
+  forceCommit?: boolean;
+  rebaseRequested?: boolean;
 
   res?: ProcessBranchResult;
   upgrades: BranchUpgradeConfig[];
+  packageFiles?: Record<string, PackageFile[]>;
 }

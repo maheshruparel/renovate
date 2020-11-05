@@ -1,5 +1,5 @@
-import { Range } from 'semver';
 import { LogLevel } from 'bunyan';
+import { Range } from 'semver';
 import { HostRule } from '../types';
 
 export type RenovateConfigStage =
@@ -9,6 +9,8 @@ export type RenovateConfigStage =
   | 'branch'
   | 'pr';
 
+export type RepositoryCacheConfig = 'disabled' | 'enabled' | 'reset';
+
 export interface GroupConfig extends Record<string, unknown> {
   branchName?: string;
   branchTopic?: string;
@@ -16,37 +18,45 @@ export interface GroupConfig extends Record<string, unknown> {
 
 // TODO: Proper typings
 export interface RenovateSharedConfig {
+  $schema?: string;
   automerge?: boolean;
   branchPrefix?: string;
   branchName?: string;
-
+  manager?: string;
   commitMessage?: string;
+  commitMessagePrefix?: string;
+  draftPR?: boolean;
   enabled?: boolean;
   enabledManagers?: string[];
+  extends?: string[];
+  fileMatch?: string[];
   group?: GroupConfig;
   groupName?: string;
   groupSlug?: string;
+  includePaths?: string[];
   ignoreDeps?: string[];
   ignorePaths?: string[];
   labels?: string[];
   managers?: string | string[];
-  masterIssueApproval?: boolean;
+  dependencyDashboardApproval?: boolean;
   npmrc?: string;
   platform?: string;
   postUpgradeTasks?: PostUpgradeTasks;
   prBodyColumns?: string[];
+  prBodyDefinitions?: Record<string, string>;
   prCreation?: 'immediate' | 'not-pending' | 'status-success' | 'approval';
   productLinks?: Record<string, string>;
   prPriority?: number;
   rebaseLabel?: string;
   rebaseWhen?: string;
   recreateClosed?: boolean;
+  repository?: string;
+  repositoryCache?: RepositoryCacheConfig;
   requiredStatusChecks?: string[];
   schedule?: string[];
-  semanticCommits?: boolean;
+  semanticCommits?: 'auto' | 'enabled' | 'disabled';
   semanticCommitScope?: string;
   semanticCommitType?: string;
-  statusCheckVerify?: boolean;
   suppressNotifications?: string[];
   timezone?: string;
   unicodeEmoji?: boolean;
@@ -65,7 +75,13 @@ export interface RenovateAdminConfig {
   baseDir?: string;
   cacheDir?: string;
   configWarningReuseIssue?: boolean;
+
+  dockerImagePrefix?: string;
+  dockerUser?: string;
+
   dryRun?: boolean;
+
+  endpoint?: string;
 
   global?: GlobalConfig;
 
@@ -77,14 +93,19 @@ export interface RenovateAdminConfig {
 
   onboarding?: boolean;
   onboardingBranch?: string;
+  onboardingCommitMessage?: string;
   onboardingPrTitle?: string;
   onboardingConfig?: RenovateSharedConfig;
 
+  platform?: string;
   postUpdateOptions?: string[];
   privateKey?: string | Buffer;
+  privateKeyPath?: string;
   repositories?: RenovateRepository[];
   requireConfig?: boolean;
   trustLevel?: 'low' | 'high';
+  redisUrl?: string;
+  gitPrivateKey?: string;
 }
 
 export type PostUpgradeTasks = {
@@ -103,6 +124,7 @@ export type RenovateRepository =
     };
 
 export interface CustomManager {
+  fileMatch: string[];
   matchStrings: string[];
   depNameTemplate?: string;
   datasourceTemplate?: string;
@@ -115,15 +137,16 @@ export interface RenovateConfig
   extends RenovateAdminConfig,
     RenovateSharedConfig,
     UpdateConfig<PackageRule>,
+    AssigneesAndReviewersConfig,
     Record<string, unknown> {
+  depName?: string;
   baseBranches?: string[];
   baseBranch?: string;
+  defaultBranch?: string;
   branchList?: string[];
-  description?: string[];
+  description?: string | string[];
 
-  endpoint?: string;
   errors?: ValidationMessage[];
-  extends?: string[];
 
   gitAuthor?: string;
 
@@ -133,12 +156,16 @@ export interface RenovateConfig
   includeForks?: boolean;
   isFork?: boolean;
 
-  masterIssue?: boolean;
-  masterIssueAutoclose?: boolean;
-  masterIssueChecks?: Record<string, string>;
-  masterIssueRebaseAllOpen?: boolean;
-  masterIssueTitle?: string;
+  fileList?: string[];
 
+  dependencyDashboard?: boolean;
+  dependencyDashboardAutoclose?: boolean;
+  dependencyDashboardChecks?: Record<string, string>;
+  dependencyDashboardRebaseAllOpen?: boolean;
+  dependencyDashboardTitle?: string;
+  dependencyDashboardHeader?: string;
+  dependencyDashboardFooter?: string;
+  packageFile?: string;
   packageRules?: PackageRule[];
   prConcurrentLimit?: number;
   prHourlyLimit?: number;
@@ -149,6 +176,18 @@ export interface RenovateConfig
   warnings?: ValidationMessage[];
   vulnerabilityAlerts?: RenovateSharedConfig;
   regexManagers?: CustomManager[];
+
+  fetchReleaseNotes?: boolean;
+}
+
+export interface AssigneesAndReviewersConfig {
+  assigneesFromCodeOwners?: boolean;
+  assignees?: string[];
+  assigneesSampleSize?: number;
+  reviewersFromCodeOwners?: boolean;
+  reviewers?: string[];
+  reviewersSampleSize?: number;
+  additionalReviewers?: string[];
 }
 
 export type UpdateType =

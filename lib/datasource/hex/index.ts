@@ -1,8 +1,11 @@
 import { logger } from '../../logger';
-import got from '../../util/got';
-import { DatasourceError, ReleaseResult, GetReleasesConfig } from '../common';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import { Http } from '../../util/http';
+import { GetReleasesConfig, ReleaseResult } from '../common';
 
 export const id = 'hex';
+
+const http = new Http(id);
 
 interface HexRelease {
   html_url: string;
@@ -13,9 +16,9 @@ interface HexRelease {
   }[];
 }
 
-export async function getPkgReleases({
+export async function getReleases({
   lookupName,
-}: Partial<GetReleasesConfig>): Promise<ReleaseResult | null> {
+}: GetReleasesConfig): Promise<ReleaseResult | null> {
   // Get dependency name from lookupName.
   // If the dependency is private lookupName contains organization name as following:
   // hexPackageName:organizationName
@@ -24,10 +27,7 @@ export async function getPkgReleases({
   const hexPackageName = lookupName.split(':')[0];
   const hexUrl = `https://hex.pm/api/packages/${hexPackageName}`;
   try {
-    const response = await got(hexUrl, {
-      json: true,
-      hostType: id,
-    });
+    const response = await http.getJson<HexRelease>(hexUrl);
 
     const hexRelease: HexRelease = response.body;
 
@@ -58,29 +58,18 @@ export async function getPkgReleases({
       result.homepage = homepage;
     }
 
-    if (meta && meta.links && meta.links.Github) {
+    if (meta?.links?.Github) {
       result.sourceUrl = hexRelease.meta.links.Github;
     }
 
     return result;
   } catch (err) {
-    const errorData = { lookupName, err };
-
     if (
       err.statusCode === 429 ||
       (err.statusCode >= 500 && err.statusCode < 600)
     ) {
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
-
-    if (err.statusCode === 401) {
-      logger.debug(errorData, 'Authorization error');
-    } else if (err.statusCode === 404) {
-      logger.debug(errorData, 'Package lookup error');
-    } else {
-      logger.warn(errorData, 'hex lookup failure: Unknown error');
-    }
+    throw err;
   }
-
-  return null;
 }

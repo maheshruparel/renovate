@@ -12,6 +12,11 @@ describe('semver.equals(a, b)', () => {
   it('should pad really short version', () => {
     expect(semver.equals('v1.0.0', '1')).toBe(true);
   });
+  it('should translate stability modifier', () => {
+    expect(semver.equals('1.0@alpha3', '1.0.0-alpha.3')).toBe(true);
+    expect(semver.equals('1.0@beta', '1.0.0-beta')).toBe(true);
+    expect(semver.equals('1.0@rc2', '1.0.0-rc.2')).toBe(true);
+  });
 });
 describe('semver.isGreaterThan(a, b)', () => {
   it('should pad short version', () => {
@@ -48,6 +53,16 @@ describe('semver.isValid(input)', () => {
     expect(semver.isValid('~1.2.3')).toBeTruthy();
     expect(semver.isValid('^1.2.3')).toBeTruthy();
     expect(semver.isValid('>1.2.3')).toBeTruthy();
+  });
+  it('should support ranges with stability modifiers', () => {
+    expect(semver.isValid('~1.2.3-beta1')).toBeTruthy();
+    expect(semver.isValid('^1.2.3-alpha')).toBeTruthy();
+    expect(semver.isValid('>1.2.3-rc2')).toBeTruthy();
+  });
+  it('should support ranges with min-stability', () => {
+    expect(semver.isValid('~1.2.3@beta')).toBeTruthy();
+    expect(semver.isValid('^1.2.3@alpha')).toBeTruthy();
+    expect(semver.isValid('>1.2.3@rc')).toBeTruthy();
   });
 });
 describe('semver.isVersion(input)', () => {
@@ -88,6 +103,22 @@ describe('semver.maxSatisfyingVersion()', () => {
       )
     ).toBe('0.5.0');
   });
+  it('handles prereleases', () => {
+    expect(
+      semver.maxSatisfyingVersion(
+        [
+          '0.4.0',
+          '0.5.0',
+          '4.0.0-beta1',
+          '4.0.0-beta2',
+          '4.2.0-beta1',
+          '4.2.0-beta2',
+          '5.0.0',
+        ],
+        '~4@beta'
+      )
+    ).toBe('4.0.0-beta2');
+  });
 });
 describe('semver.minSatisfyingVersion()', () => {
   it('handles massaged tilde', () => {
@@ -110,6 +141,22 @@ describe('semver.minSatisfyingVersion()', () => {
       )
     ).toBe('0.4.0');
   });
+  it('handles prereleases', () => {
+    expect(
+      semver.minSatisfyingVersion(
+        [
+          '0.4.0',
+          '0.5.0',
+          '4.0.0-beta1',
+          '4.0.0',
+          '4.2.0-beta1',
+          '4.2.0-beta2',
+          '5.0.0',
+        ],
+        '~4@beta'
+      )
+    ).toBe('4.0.0-beta1');
+  });
 });
 describe('semver.matches()', () => {
   it('handles massaged tilde', () => {
@@ -122,6 +169,14 @@ describe('semver.getNewValue()', () => {
     expect(
       semver.getNewValue({
         currentValue: '~1.0',
+        rangeStrategy: 'pin',
+        fromVersion: '1.0',
+        toVersion: 'V1.1',
+      })
+    ).toEqual('V1.1');
+    expect(
+      semver.getNewValue({
+        currentValue: '^1.0',
         rangeStrategy: 'pin',
         fromVersion: '1.0',
         toVersion: 'V1.1',
@@ -147,6 +202,46 @@ describe('semver.getNewValue()', () => {
         toVersion: '1.0.7',
       })
     ).toEqual('^1.0');
+  });
+  it('bumps less than to same', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '<2.7.14',
+        rangeStrategy: 'bump',
+        fromVersion: '2.0.3',
+        toVersion: '2.0.4',
+      })
+    ).toEqual('<2.7.14');
+  });
+  it('bumps caret to same', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '^1.0.0',
+        rangeStrategy: 'bump',
+        fromVersion: '1.0.0',
+        toVersion: '1.3.5',
+      })
+    ).toEqual('^1.3.5');
+  });
+  it('replaces caret to same', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '^1',
+        rangeStrategy: 'replace',
+        fromVersion: '1.0.0',
+        toVersion: '1.3.5',
+      })
+    ).toEqual('^1');
+  });
+  it('replaces short caret', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '^1.0',
+        rangeStrategy: 'replace',
+        fromVersion: '1.0.0',
+        toVersion: '2.3.5',
+      })
+    ).toEqual('^2.0');
   });
   it('handles tilde zero', () => {
     expect(
@@ -247,6 +342,36 @@ describe('semver.getNewValue()', () => {
         toVersion: '1.1.7',
       })
     ).toEqual('^v1.1');
+  });
+  it('bumps short caret with stability modifiers', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '^v1.0@beta',
+        rangeStrategy: 'bump',
+        fromVersion: '1.0.0-beta3',
+        toVersion: '1.0.0-beta5',
+      })
+    ).toEqual('^v1.0.0-beta5@beta');
+  });
+  it('replaces short caret with stability modifiers', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '^v1.0@beta',
+        rangeStrategy: 'replace',
+        fromVersion: '1.0.0-beta3',
+        toVersion: '2.0.0-beta5',
+      })
+    ).toEqual('^v2.0.0-beta5@beta');
+  });
+  it('preserves the current min-stability modifiers', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '^4.0@alpha',
+        rangeStrategy: 'replace',
+        fromVersion: '4.0.0-alpha1',
+        toVersion: '4.0.0-beta5',
+      })
+    ).toEqual('^4.0.0-beta5@alpha');
   });
   it('handles differing lengths', () => {
     expect(

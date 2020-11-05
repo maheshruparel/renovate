@@ -1,39 +1,39 @@
-import { logger } from '../../../../logger';
-import * as allVersioning from '../../../../versioning';
-import { getRollbackUpdate, RollbackConfig } from './rollback';
-import { getRangeStrategy } from '../../../../manager';
-import { filterVersions, FilterConfig } from './filter';
 import {
-  getPkgReleases,
-  supportsDigests,
-  getDigest,
+  RenovateConfig,
+  UpdateType,
+  ValidationMessage,
+} from '../../../../config';
+import {
   Release,
+  getDigest,
+  getPkgReleases,
+  isGetPkgReleasesConfig,
+  supportsDigests,
 } from '../../../../datasource';
-import { LookupUpdate } from './common';
-import { RangeConfig } from '../../../../manager/common';
-import { RenovateConfig, UpdateType } from '../../../../config';
-import { clone } from '../../../../util/clone';
 import * as datasourceGitSubmodules from '../../../../datasource/git-submodules';
+import { logger } from '../../../../logger';
+import { getRangeStrategy } from '../../../../manager';
+import { LookupUpdate, RangeConfig } from '../../../../manager/common';
 import { SkipReason } from '../../../../types';
-
-export interface LookupWarning {
-  updateType: 'warning';
-  message: string;
-}
+import { clone } from '../../../../util/clone';
+import * as allVersioning from '../../../../versioning';
+import { FilterConfig, filterVersions } from './filter';
+import { RollbackConfig, getRollbackUpdate } from './rollback';
 
 export interface UpdateResult {
   sourceDirectory?: string;
   dockerRepository?: string;
   dockerRegistry?: string;
   changelogUrl?: string;
+  dependencyUrl?: string;
   homepage?: string;
   deprecationMessage?: string;
   sourceUrl?: string;
   skipReason: SkipReason;
   releases: Release[];
-
+  fixedVersion?: string;
   updates: LookupUpdate[];
-  warnings: LookupWarning[];
+  warnings: ValidationMessage[];
 }
 
 export interface LookupUpdateConfig
@@ -92,10 +92,10 @@ function getFromVersion(
     return currentValue.replace(/=/g, '').trim();
   }
   logger.trace(`currentValue ${currentValue} is range`);
-  let useVersions = allVersions.filter(v => version.matches(v, currentValue));
+  let useVersions = allVersions.filter((v) => version.matches(v, currentValue));
   if (latestVersion && version.matches(latestVersion, currentValue)) {
     useVersions = useVersions.filter(
-      v => !version.isGreaterThan(v, latestVersion)
+      (v) => !version.isGreaterThan(v, latestVersion)
     );
   }
   if (rangeStrategy === 'pin') {
@@ -142,36 +142,45 @@ export async function lookupUpdates(
   if (!isValid) {
     res.skipReason = SkipReason.InvalidValue;
   }
+  // Record if the dep is fixed to a version
+  if (lockedVersion) {
+    res.fixedVersion = lockedVersion;
+  } else if (currentValue && version.isSingleVersion(currentValue)) {
+    res.fixedVersion = currentValue.replace(/^=+/, '');
+  }
+  // istanbul ignore if
+  if (!isGetPkgReleasesConfig(config)) {
+    res.skipReason = SkipReason.Unknown;
+    return res;
+  }
 
   if (isValid) {
     const dependency = clone(await getPkgReleases(config));
     if (!dependency) {
       // If dependency lookup fails then warn and return
-      const result: LookupWarning = {
-        updateType: 'warning',
+      const warning: ValidationMessage = {
+        depName,
         message: `Failed to look up dependency ${depName}`,
       };
       logger.debug(
         { dependency: depName, packageFile: config.packageFile },
-        result.message
+        warning.message
       );
       // TODO: return warnings in own field
-      res.warnings.push(result);
+      res.warnings.push(warning);
       return res;
     }
     if (dependency.deprecationMessage) {
       logger.debug({ dependency: depName }, 'Found deprecationMessage');
       res.deprecationMessage = dependency.deprecationMessage;
     }
-    res.sourceUrl =
-      dependency.sourceUrl && dependency.sourceUrl.length
-        ? dependency.sourceUrl
-        : /* istanbul ignore next */ null;
+    res.sourceUrl = dependency?.sourceUrl;
     if (dependency.sourceDirectory) {
       res.sourceDirectory = dependency.sourceDirectory;
     }
     res.homepage = dependency.homepage;
     res.changelogUrl = dependency.changelogUrl;
+    res.dependencyUrl = dependency?.dependencyUrl;
     // TODO: improve this
     // istanbul ignore if
     if (dependency.dockerRegistry) {
@@ -180,9 +189,9 @@ export async function lookupUpdates(
     }
     const { latestVersion, releases } = dependency;
     // Filter out any results from datasource that don't comply with our versioning
-    let allVersions = releases
-      .map(release => release.version)
-      .filter(v => version.isVersion(v));
+    let allVersions = releases.filter((release) =>
+      version.isVersion(release.version)
+    );
     // istanbul ignore if
     if (allVersions.length === 0) {
       const message = `Found no results from datasource that look like a version`;
@@ -195,28 +204,28 @@ export async function lookupUpdates(
       const taggedVersion = dependency.tags[config.followTag];
       if (!taggedVersion) {
         res.warnings.push({
-          updateType: 'warning',
+          depName,
           message: `Can't find version with tag ${config.followTag} for ${depName}`,
         });
         return res;
       }
       allVersions = allVersions.filter(
-        v =>
-          v === taggedVersion ||
-          (v === currentValue &&
+        (v) =>
+          v.version === taggedVersion ||
+          (v.version === currentValue &&
             version.isGreaterThan(taggedVersion, currentValue))
       );
     }
     // Check that existing constraint can be satisfied
-    const allSatisfyingVersions = allVersions.filter(v =>
-      version.matches(v, currentValue)
+    const allSatisfyingVersions = allVersions.filter((v) =>
+      version.matches(v.version, currentValue)
     );
     if (config.rollbackPrs && !allSatisfyingVersions.length) {
       const rollback = getRollbackUpdate(config, allVersions);
       // istanbul ignore if
       if (!rollback) {
         res.warnings.push({
-          updateType: 'warning',
+          depName,
           message: `Can't find version matching ${currentValue} for ${depName}`,
         });
         return res;
@@ -224,20 +233,30 @@ export async function lookupUpdates(
       res.updates.push(rollback);
     }
     let rangeStrategy = getRangeStrategy(config);
-    // istanbul ignore if
-    if (rangeStrategy === 'update-lockfile' && !lockedVersion) {
+    // istanbul ignore next
+    if (
+      vulnerabilityAlert &&
+      rangeStrategy === 'update-lockfile' &&
+      !lockedVersion
+    ) {
       rangeStrategy = 'bump';
     }
     const nonDeprecatedVersions = releases
-      .filter(release => !release.isDeprecated)
-      .map(release => release.version);
+      .filter((release) => !release.isDeprecated)
+      .map((release) => release.version);
     const fromVersion =
       getFromVersion(
         config,
         rangeStrategy,
         latestVersion,
         nonDeprecatedVersions
-      ) || getFromVersion(config, rangeStrategy, latestVersion, allVersions);
+      ) ||
+      getFromVersion(
+        config,
+        rangeStrategy,
+        latestVersion,
+        allVersions.map((v) => v.version)
+      );
     if (
       fromVersion &&
       rangeStrategy === 'pin' &&
@@ -265,17 +284,16 @@ export async function lookupUpdates(
       config,
       filterStart,
       dependency.latestVersion,
-      allVersions,
-      releases
-    ).filter(v =>
+      allVersions
+    ).filter((v) =>
       // Leave only compatible versions
-      version.isCompatible(v, currentValue)
+      version.isCompatible(v.version, currentValue)
     );
     if (vulnerabilityAlert) {
       filteredVersions = filteredVersions.slice(0, 1);
     }
-    const buckets = {};
-    for (const toVersion of filteredVersions) {
+    const buckets: Record<string, LookupUpdate> = {};
+    for (const toVersion of filteredVersions.map((v) => v.version)) {
       const update: LookupUpdate = { fromVersion, toVersion } as any;
       try {
         update.newValue = version.getNewValue({
@@ -318,19 +336,21 @@ export async function lookupUpdates(
       if (!version.isVersion(update.newValue)) {
         update.isRange = true;
       }
-      const updateRelease = releases.find(release =>
+      const updateRelease = releases.find((release) =>
         version.equals(release.version, toVersion)
       );
       // TODO: think more about whether to just Object.assign this
-      const releaseFields = [
-        'releaseTimestamp',
-        'canBeUnpublished',
-        'downloadUrl',
-        'checksumUrl',
-      ];
-      releaseFields.forEach(field => {
+      const releaseFields: (keyof Pick<
+        Release,
+        | 'releaseTimestamp'
+        | 'canBeUnpublished'
+        | 'downloadUrl'
+        | 'checksumUrl'
+        | 'newDigest'
+      >)[] = ['releaseTimestamp', 'canBeUnpublished', 'newDigest'];
+      releaseFields.forEach((field) => {
         if (updateRelease[field] !== undefined) {
-          update[field] = updateRelease[field];
+          update[field] = updateRelease[field] as never;
         }
       });
 
@@ -357,7 +377,7 @@ export async function lookupUpdates(
     }
   }
   // Add digests if necessary
-  if (await supportsDigests(config)) {
+  if (config.newDigest || supportsDigests(config)) {
     if (
       config.currentDigest &&
       config.datasource !== datasourceGitSubmodules.id
@@ -371,7 +391,7 @@ export async function lookupUpdates(
       }
     } else if (config.pinDigests) {
       // Create a pin only if one doesn't already exists
-      if (!res.updates.some(update => update.updateType === 'pin')) {
+      if (!res.updates.some((update) => update.updateType === 'pin')) {
         // pin digest
         res.updates.push({
           updateType: 'pin',
@@ -380,10 +400,12 @@ export async function lookupUpdates(
       }
     } else if (config.datasource === datasourceGitSubmodules.id) {
       const dependency = clone(await getPkgReleases(config));
-      res.updates.push({
-        updateType: 'digest',
-        newValue: dependency.releases[0].version,
-      });
+      if (dependency?.releases[0]?.version) {
+        res.updates.push({
+          updateType: 'digest',
+          newValue: dependency.releases[0].version,
+        });
+      }
     }
     if (version.valueToVersion) {
       for (const update of res.updates || []) {
@@ -395,7 +417,8 @@ export async function lookupUpdates(
     // update digest for all
     for (const update of res.updates) {
       if (config.pinDigests || config.currentDigest) {
-        update.newDigest = await getDigest(config, update.newValue);
+        update.newDigest =
+          update.newDigest || (await getDigest(config, update.newValue));
         if (update.newDigest) {
           update.newDigestShort = update.newDigest
             .replace('sha256:', '')
@@ -422,16 +445,19 @@ export async function lookupUpdates(
       }
     }
   }
+  if (res.updates.length) {
+    delete res.skipReason;
+  }
   // Strip out any non-changed ones
   res.updates = res.updates
-    .filter(update => update.newDigest !== null)
+    .filter((update) => update.newDigest !== null)
     .filter(
-      update =>
+      (update) =>
         update.newValue !== config.currentValue ||
         update.isLockfileUpdate ||
         (update.newDigest && !update.newDigest.startsWith(config.currentDigest))
     );
-  if (res.updates.some(update => update.updateType === 'pin')) {
+  if (res.updates.some((update) => update.updateType === 'pin')) {
     for (const update of res.updates) {
       if (update.updateType !== 'pin' && update.updateType !== 'rollback') {
         update.blockedByPin = true;

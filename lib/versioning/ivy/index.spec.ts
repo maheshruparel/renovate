@@ -1,7 +1,7 @@
 import {
   REV_TYPE_LATEST,
-  REV_TYPE_SUBREV,
   REV_TYPE_RANGE,
+  REV_TYPE_SUBREV,
   parseDynamicRevision,
 } from './parse';
 import ivy from '.';
@@ -49,7 +49,7 @@ describe('versioning/ivy/match', () => {
       ']1.0,)',
       '(,2.0]',
       '(,2.0[',
-    ].forEach(value => {
+    ].forEach((value) => {
       expect(parseDynamicRevision(value)).toEqual({
         type: REV_TYPE_RANGE,
         value,

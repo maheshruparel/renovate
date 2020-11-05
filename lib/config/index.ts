@@ -1,12 +1,14 @@
-import { logger, levels, addStream, setContext } from '../logger';
-import * as definitions from './definitions';
-import * as defaultsParser from './defaults';
-import * as fileParser from './file';
-import * as cliParser from './cli';
-import * as envParser from './env';
-import { resolveConfigPresets } from './presets';
+import { addStream, levels, logger, setContext } from '../logger';
 import { get, getLanguageList, getManagerList } from '../manager';
+import { readFile } from '../util/fs';
+import { ensureTrailingSlash } from '../util/url';
+import * as cliParser from './cli';
 import { RenovateConfig, RenovateConfigStage } from './common';
+import * as defaultsParser from './defaults';
+import * as definitions from './definitions';
+import * as envParser from './env';
+import * as fileParser from './file';
+import { resolveConfigPresets } from './presets';
 import { mergeChildConfig } from './utils';
 
 export * from './common';
@@ -63,7 +65,19 @@ export async function parseConfigs(
   }
 
   if (config.forceCli) {
-    config = mergeChildConfig(config, { force: { ...cliConfig } });
+    const forcedCli = { ...cliConfig };
+    delete forcedCli.token;
+    delete forcedCli.hostRules;
+    if (config.force) {
+      config.force = Object.assign(config.force, forcedCli);
+    } else {
+      config.force = forcedCli;
+    }
+  }
+
+  if (!config.privateKey && config.privateKeyPath) {
+    config.privateKey = await readFile(config.privateKeyPath);
+    delete config.privateKeyPath;
   }
 
   // Set log level
@@ -102,7 +116,7 @@ export async function parseConfigs(
   // Massage endpoint to have a trailing slash
   if (config.endpoint) {
     logger.debug('Adding trailing slash to endpoint');
-    config.endpoint = config.endpoint.replace(/\/?$/, '/');
+    config.endpoint = ensureTrailingSlash(config.endpoint);
   }
 
   // Remove log file entries
@@ -110,12 +124,6 @@ export async function parseConfigs(
   delete config.logFileLevel;
 
   // Move global variables that we need to use later
-  const importGlobals = ['prBanner', 'prFooter'];
-  config.global = {};
-  importGlobals.forEach(key => {
-    config.global[key] = config[key];
-    delete config[key];
-  });
   global.trustLevel =
     config.trustLevel || /* istanbul ignore next: never happen? */ 'low';
   delete config.trustLevel;

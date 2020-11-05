@@ -1,5 +1,5 @@
+import { RenovateConfig, getConfig } from '../../../test/util';
 import { checkIfConfigured } from './configured';
-import { getConfig, RenovateConfig } from '../../../test/util';
 
 let config: RenovateConfig;
 beforeEach(() => {
@@ -10,7 +10,7 @@ beforeEach(() => {
 describe('workers/repository/configured', () => {
   describe('checkIfConfigured()', () => {
     it('returns', () => {
-      checkIfConfigured(config);
+      expect(() => checkIfConfigured(config)).not.toThrow();
     });
     it('throws if disabled', () => {
       config.enabled = false;

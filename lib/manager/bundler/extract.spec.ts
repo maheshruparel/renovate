@@ -1,9 +1,9 @@
 import { readFileSync } from 'fs';
-import { extractPackageFile } from './extract';
-import { platform as _platform } from '../../platform';
+import { fs } from '../../../test/util';
 import { isValid } from '../../versioning/ruby';
+import { extractPackageFile } from './extract';
 
-const platform: any = _platform;
+jest.mock('../../util/fs');
 
 const railsGemfile = readFileSync(
   'lib/manager/bundler/__fixtures__/Gemfile.rails',
@@ -51,6 +51,10 @@ const gitlabFossGemfile = readFileSync(
   'lib/manager/bundler/__fixtures__/Gemfile.gitlab-foss',
   'utf8'
 );
+const sourceBlockGemfile = readFileSync(
+  'lib/manager/bundler/__fixtures__/Gemfile.sourceBlock',
+  'utf8'
+);
 const sourceBlockWithNewLinesGemfileLock = readFileSync(
   'lib/manager/bundler/__fixtures__/Gemfile.sourceBlockWithNewLines.lock',
   'utf8'
@@ -72,16 +76,16 @@ describe('lib/manager/bundler/extract', () => {
       expect(await extractPackageFile('nothing here', 'Gemfile')).toBeNull();
     });
     it('parses rails Gemfile', async () => {
-      platform.getFile.mockReturnValueOnce(railsGemfileLock);
+      fs.readLocalFile.mockResolvedValueOnce(railsGemfileLock);
       const res = await extractPackageFile(railsGemfile, 'Gemfile');
       expect(res).toMatchSnapshot();
       // couple of dependency of ruby rails are not present in the lock file. Filter out those before processing
       expect(
         res.deps
-          .filter(dep => {
+          .filter((dep) => {
             return Object.prototype.hasOwnProperty.call(dep, 'lockedVersion');
           })
-          .every(dep => {
+          .every((dep) => {
             return (
               Object.prototype.hasOwnProperty.call(dep, 'lockedVersion') &&
               isValid(dep.lockedVersion)
@@ -96,11 +100,11 @@ describe('lib/manager/bundler/extract', () => {
       validateGems(sourceGroupGemfile, res);
     });
     it('parse webpacker Gemfile', async () => {
-      platform.getFile.mockReturnValueOnce(webPackerGemfileLock);
+      fs.readLocalFile.mockResolvedValueOnce(webPackerGemfileLock);
       const res = await extractPackageFile(webPackerGemfile, 'Gemfile');
       expect(res).toMatchSnapshot();
       expect(
-        res.deps.every(dep => {
+        res.deps.every((dep) => {
           return (
             Object.prototype.hasOwnProperty.call(dep, 'lockedVersion') &&
             isValid(dep.lockedVersion)
@@ -110,15 +114,15 @@ describe('lib/manager/bundler/extract', () => {
       validateGems(webPackerGemfile, res);
     });
     it('parse mastodon Gemfile', async () => {
-      platform.getFile.mockReturnValueOnce(mastodonGemfileLock);
+      fs.readLocalFile.mockResolvedValueOnce(mastodonGemfileLock);
       const res = await extractPackageFile(mastodonGemfile, 'Gemfile');
       expect(res).toMatchSnapshot();
       expect(
         res.deps
-          .filter(dep => {
+          .filter((dep) => {
             return Object.prototype.hasOwnProperty.call(dep, 'lockedVersion');
           })
-          .every(dep => {
+          .every((dep) => {
             return (
               Object.prototype.hasOwnProperty.call(dep, 'lockedVersion') &&
               isValid(dep.lockedVersion)
@@ -128,11 +132,11 @@ describe('lib/manager/bundler/extract', () => {
       validateGems(mastodonGemfile, res);
     });
     it('parse Ruby CI Gemfile', async () => {
-      platform.getFile.mockReturnValueOnce(rubyCIGemfileLock);
+      fs.readLocalFile.mockResolvedValueOnce(rubyCIGemfileLock);
       const res = await extractPackageFile(rubyCIGemfile, 'Gemfile');
       expect(res).toMatchSnapshot();
       expect(
-        res.deps.every(dep => {
+        res.deps.every((dep) => {
           return (
             Object.prototype.hasOwnProperty.call(dep, 'lockedVersion') &&
             isValid(dep.lockedVersion)
@@ -143,11 +147,11 @@ describe('lib/manager/bundler/extract', () => {
     });
   });
   it('parse Gitlab Foss Gemfile', async () => {
-    platform.getFile.mockReturnValueOnce(gitlabFossGemfileLock);
+    fs.readLocalFile.mockResolvedValueOnce(gitlabFossGemfileLock);
     const res = await extractPackageFile(gitlabFossGemfile, 'Gemfile');
     expect(res).toMatchSnapshot();
     expect(
-      res.deps.every(dep => {
+      res.deps.every((dep) => {
         return (
           Object.prototype.hasOwnProperty.call(dep, 'lockedVersion') &&
           isValid(dep.lockedVersion)
@@ -157,8 +161,13 @@ describe('lib/manager/bundler/extract', () => {
     validateGems(gitlabFossGemfile, res);
   });
 
+  it('parse source blocks in Gemfile', async () => {
+    fs.readLocalFile.mockResolvedValueOnce(sourceBlockGemfile);
+    const res = await extractPackageFile(sourceBlockGemfile, 'Gemfile');
+    expect(res).toMatchSnapshot();
+  });
   it('parse source blocks with spaces in Gemfile', async () => {
-    platform.getFile.mockReturnValueOnce(sourceBlockWithNewLinesGemfileLock);
+    fs.readLocalFile.mockResolvedValueOnce(sourceBlockWithNewLinesGemfileLock);
     const res = await extractPackageFile(
       sourceBlockWithNewLinesGemfile,
       'Gemfile'

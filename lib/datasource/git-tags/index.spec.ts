@@ -1,23 +1,28 @@
-import _simpleGit from 'simple-git/promise';
-import { getPkgReleases } from '.';
+import fs from 'fs-extra';
+import _simpleGit from 'simple-git';
+import { getPkgReleases } from '..';
+import { id as datasource, getDigest } from '.';
 
-jest.mock('simple-git/promise');
+jest.mock('simple-git');
 const simpleGit: any = _simpleGit;
 
-// const lookupName = 'vapor';
-const lookupName = 'https://github.com/example/example.git';
+const depName = 'https://github.com/example/example.git';
+
+const lsRemote1 = fs.readFileSync(
+  'lib/datasource/git-refs/__fixtures__/ls-remote-1.txt',
+  'utf8'
+);
 
 describe('datasource/git-tags', () => {
-  beforeEach(() => global.renovateCache.rmAll());
-  describe('getPkgReleases', () => {
+  describe('getReleases', () => {
     it('returns nil if response is wrong', async () => {
       simpleGit.mockReturnValue({
         listRemote() {
           return Promise.resolve(null);
         },
       });
-      const versions = await getPkgReleases({ lookupName });
-      expect(versions).toEqual(null);
+      const versions = await getPkgReleases({ datasource, depName });
+      expect(versions).toBeNull();
     });
     it('returns nil if remote call throws exception', async () => {
       simpleGit.mockReturnValue({
@@ -25,23 +30,59 @@ describe('datasource/git-tags', () => {
           throw new Error();
         },
       });
-      const versions = await getPkgReleases({ lookupName });
-      expect(versions).toEqual(null);
+      const versions = await getPkgReleases({ datasource, depName });
+      expect(versions).toBeNull();
     });
     it('returns versions filtered from tags', async () => {
       simpleGit.mockReturnValue({
         listRemote() {
-          return Promise.resolve(
-            'commithash1\trefs/tags/0.0.1\ncommithash2\trefs/tags/v0.0.2\ncommithash3\trefs/tags/v0.0.2^{}'
-          );
+          return Promise.resolve(lsRemote1);
         },
       });
 
       const versions = await getPkgReleases({
-        lookupName,
+        datasource,
+        depName,
       });
-      const result = versions.releases.map(x => x.version).sort();
-      expect(result).toEqual(['0.0.1', 'v0.0.2']);
+      expect(versions).toMatchSnapshot();
+    });
+  });
+  describe('getDigest()', () => {
+    it('returns null if not found', async () => {
+      simpleGit.mockReturnValue({
+        listRemote() {
+          return Promise.resolve(lsRemote1);
+        },
+      });
+      const digest = await getDigest(
+        { datasource, depName: 'a tag to look up' },
+        'notfound'
+      );
+      expect(digest).toBeNull();
+    });
+    it('returns digest for tag', async () => {
+      simpleGit.mockReturnValue({
+        listRemote() {
+          return Promise.resolve(lsRemote1);
+        },
+      });
+      const digest = await getDigest(
+        { datasource, depName: 'a tag to look up' },
+        'v1.0.2'
+      );
+      expect(digest).toMatchSnapshot();
+    });
+    it('returns digest for HEAD', async () => {
+      simpleGit.mockReturnValue({
+        listRemote() {
+          return Promise.resolve(lsRemote1);
+        },
+      });
+      const digest = await getDigest(
+        { datasource, depName: 'another tag to look up' },
+        undefined
+      );
+      expect(digest).toMatchSnapshot();
     });
   });
 });

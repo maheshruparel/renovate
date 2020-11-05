@@ -1,14 +1,15 @@
-import { logger } from '../../../../logger';
-import { extractAllDependencies } from '../../extract';
-import { createOnboardingBranch } from './create';
-import { rebaseOnboardingBranch } from './rebase';
-import { isOnboarded, onboardingPrExists } from './check';
 import { RenovateConfig } from '../../../../config';
-import { platform } from '../../../../platform';
 import {
   MANAGER_NO_PACKAGE_FILES,
   REPOSITORY_FORKED,
 } from '../../../../constants/error-messages';
+import { logger } from '../../../../logger';
+import { platform } from '../../../../platform';
+import { checkoutBranch } from '../../../../util/git';
+import { extractAllDependencies } from '../../extract';
+import { isOnboarded, onboardingPrExists } from './check';
+import { createOnboardingBranch } from './create';
+import { rebaseOnboardingBranch } from './rebase';
 
 export async function checkOnboardingBranch(
   config: RenovateConfig
@@ -33,6 +34,11 @@ export async function checkOnboardingBranch(
         'Branch updated'
       );
     }
+    // istanbul ignore if
+    if (platform.refreshPr) {
+      const onboardingPr = await platform.getBranchPr(config.onboardingBranch);
+      await platform.refreshPr(onboardingPr.number);
+    }
   } else {
     logger.debug('Onboarding PR does not exist');
     if (Object.entries(await extractAllDependencies(config)).length === 0) {
@@ -40,6 +46,7 @@ export async function checkOnboardingBranch(
     }
     logger.debug('Need to create onboarding PR');
     const commit = await createOnboardingBranch(config);
+    // istanbul ignore if
     if (commit) {
       logger.info(
         { branch: config.onboardingBranch, commit, onboarding: true },
@@ -48,7 +55,7 @@ export async function checkOnboardingBranch(
     }
   }
   if (!config.dryRun) {
-    await platform.setBaseBranch(config.onboardingBranch);
+    await checkoutBranch(config.onboardingBranch);
   }
   const branchList = [config.onboardingBranch];
   return { ...config, repoIsOnboarded, branchList };

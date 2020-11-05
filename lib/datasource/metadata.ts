@@ -1,7 +1,8 @@
+import URL from 'url';
 import is from '@sindresorhus/is';
 import parse from 'github-url-from-git';
-import { ReleaseResult } from './common';
 import * as hostRules from '../util/host-rules';
+import { ReleaseResult } from './common';
 
 // Use this object to define changelog URLs for packages
 // Only necessary when the changelog data cannot be found in the package's source repository
@@ -11,28 +12,47 @@ const manualChangelogUrls = {
       'https://github.com/facebook/create-react-app/releases',
     firebase: 'https://firebase.google.com/support/release-notes/js',
     'flow-bin': 'https://github.com/facebook/flow/blob/master/Changelog.md',
+    gatsby:
+      'https://github.com/gatsbyjs/gatsby/blob/master/packages/gatsby/CHANGELOG.md',
     'react-native':
       'https://github.com/react-native-community/react-native-releases/blob/master/CHANGELOG.md',
+    'zone.js':
+      'https://github.com/angular/angular/blob/master/packages/zone.js/CHANGELOG.md',
   },
   pypi: {
-    'pytest-django':
-      'https://pytest-django.readthedocs.io/en/latest/changelog.html#changelog',
+    alembic: 'https://alembic.sqlalchemy.org/en/latest/changelog.html',
+    beautifulsoup4:
+      'https://bazaar.launchpad.net/~leonardr/beautifulsoup/bs4/view/head:/CHANGELOG',
     django: 'https://github.com/django/django/tree/master/docs/releases',
     djangorestframework:
       'https://www.django-rest-framework.org/community/release-notes/',
     flake8: 'http://flake8.pycqa.org/en/latest/release-notes/index.html',
     'django-storages':
       'https://github.com/jschneier/django-storages/blob/master/CHANGELOG.rst',
+    hypothesis:
+      'https://github.com/HypothesisWorks/hypothesis/blob/master/hypothesis-python/docs/changes.rst',
+    lxml: 'https://git.launchpad.net/lxml/plain/CHANGES.txt',
+    mypy: 'https://mypy-lang.blogspot.com/',
     phonenumbers:
       'https://github.com/daviddrysdale/python-phonenumbers/blob/dev/python/HISTORY.md',
+    psycopg2: 'http://initd.org/psycopg/articles/tag/release/',
     'psycopg2-binary': 'http://initd.org/psycopg/articles/tag/release/',
+    pycountry:
+      'https://github.com/flyingcircusio/pycountry/blob/master/HISTORY.txt',
     'django-debug-toolbar':
       'https://django-debug-toolbar.readthedocs.io/en/latest/changes.html',
     'firebase-admin':
       'https://firebase.google.com/support/release-notes/admin/python',
-    requests:
-      'http://docs.python-requests.org/en/master/community/updates/#release-and-version-history',
+    requests: 'https://github.com/psf/requests/blob/master/HISTORY.md',
+    sqlalchemy: 'https://docs.sqlalchemy.org/en/latest/changelog/',
+    uwsgi: 'https://uwsgi-docs.readthedocs.io/en/latest/#release-notes',
     wagtail: 'https://github.com/wagtail/wagtail/tree/master/docs/releases',
+  },
+  docker: {
+    'gitlab/gitlab-ce':
+      'https://gitlab.com/gitlab-org/omnibus-gitlab/-/blob/master/CHANGELOG.md',
+    'gitlab/gitlab-runner':
+      'https://gitlab.com/gitlab-org/gitlab-runner/-/blob/master/CHANGELOG.md',
   },
 };
 
@@ -45,7 +65,14 @@ const manualSourceUrls = {
       'https://github.com/hyper-expanse/library-release-workflows',
   },
   docker: {
+    'docker/compose': 'https://github.com/docker/compose',
+    'gcr.io/kaniko-project/executor':
+      'https://github.com/GoogleContainerTools/kaniko',
+    'gitlab/gitlab-ce': 'https://gitlab.com/gitlab-org/omnibus-gitlab',
+    'gitlab/gitlab-runner': 'https://gitlab.com/gitlab-org/gitlab-runner',
+    'hashicorp/terraform': 'https://github.com/hashicorp/terraform',
     node: 'https://github.com/nodejs/node',
+    traefik: 'https://github.com/containous/traefik',
   },
   kubernetes: {
     node: 'https://github.com/nodejs/node',
@@ -57,11 +84,29 @@ const manualSourceUrls = {
     node: 'https://github.com/nodejs/node',
   },
   pypi: {
-    coverage: 'https://github.com/nedbat/coveragepy/', // bitbucket entry on pypi is wrong
     mkdocs: 'https://github.com/mkdocs/mkdocs',
-    pillow: 'https://github.com/python-pillow/Pillow',
+    mypy: 'https://github.com/python/mypy',
   },
 };
+
+function massageGithubUrl(url: string): string {
+  return url
+    .replace('http:', 'https:')
+    .replace(/^git:\/?\/?/, 'https://')
+    .replace('www.github.com', 'github.com')
+    .split('/')
+    .slice(0, 5)
+    .join('/');
+}
+
+function massageGitlabUrl(url: string): string {
+  return url
+    .replace('http:', 'https:')
+    .replace(/^git:\/?\/?/, 'https://')
+    .replace(/\/tree\/.*$/i, '')
+    .replace(/\/$/i, '')
+    .replace('.git', '');
+}
 
 /* eslint-disable no-param-reassign */
 export function addMetaData(
@@ -73,40 +118,21 @@ export function addMetaData(
     return;
   }
   const lookupNameLowercase = lookupName ? lookupName.toLowerCase() : null;
-  if (
-    manualChangelogUrls[datasource] &&
-    manualChangelogUrls[datasource][lookupNameLowercase]
-  ) {
+  if (manualChangelogUrls[datasource]?.[lookupNameLowercase]) {
     dep.changelogUrl = manualChangelogUrls[datasource][lookupNameLowercase];
   }
-  if (
-    manualSourceUrls[datasource] &&
-    manualSourceUrls[datasource][lookupNameLowercase]
-  ) {
+  if (manualSourceUrls[datasource]?.[lookupNameLowercase]) {
     dep.sourceUrl = manualSourceUrls[datasource][lookupNameLowercase];
   }
 
-  /**
-   * @param {string} url
-   */
-  const massageGithubUrl = (url: string): string => {
-    return url
-      .replace('http:', 'https:')
-      .replace(/^git:\/?\/?/, 'https://')
-      .replace('www.github.com', 'github.com')
-      .split('/')
-      .slice(0, 5)
-      .join('/');
-  };
   if (
-    dep.changelogUrl &&
-    dep.changelogUrl.includes('github.com') && // lgtm [js/incomplete-url-substring-sanitization]
+    dep.changelogUrl?.includes('github.com') && // lgtm [js/incomplete-url-substring-sanitization]
     !dep.sourceUrl
   ) {
     dep.sourceUrl = dep.changelogUrl;
   }
   // prettier-ignore
-  if (dep.homepage && dep.homepage.includes('github.com')) { // lgtm [js/incomplete-url-substring-sanitization]
+  if (dep.homepage?.includes('github.com')) { // lgtm [js/incomplete-url-substring-sanitization]
     if (!dep.sourceUrl) {
       dep.sourceUrl = dep.homepage;
     }
@@ -114,15 +140,27 @@ export function addMetaData(
   }
   const extraBaseUrls = [];
   // istanbul ignore next
-  hostRules.hosts({ hostType: 'github' }).forEach(host => {
+  hostRules.hosts({ hostType: 'github' }).forEach((host) => {
     extraBaseUrls.push(host, `gist.${host}`);
   });
+  extraBaseUrls.push('gitlab.com');
   if (dep.sourceUrl) {
-    // try massaging it
-    dep.sourceUrl =
-      parse(massageGithubUrl(dep.sourceUrl), {
-        extraBaseUrls,
-      }) || dep.sourceUrl;
+    const parsedUrl = URL.parse(dep.sourceUrl);
+    if (parsedUrl?.hostname) {
+      let massagedUrl;
+      if (parsedUrl.hostname.includes('gitlab')) {
+        massagedUrl = massageGitlabUrl(dep.sourceUrl);
+      } else {
+        massagedUrl = massageGithubUrl(dep.sourceUrl);
+      }
+      // try massaging it
+      dep.sourceUrl =
+        parse(massagedUrl, {
+          extraBaseUrls,
+        }) || dep.sourceUrl;
+    } else {
+      delete dep.sourceUrl;
+    }
   }
 
   // Clean up any empty urls

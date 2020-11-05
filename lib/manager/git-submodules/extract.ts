@@ -1,9 +1,10 @@
-import Git from 'simple-git/promise';
-import upath from 'upath';
 import URL from 'url';
+import Git, { SimpleGit } from 'simple-git';
+import upath from 'upath';
 
-import { ManagerConfig, PackageFile } from '../common';
 import * as datasourceGitSubmodules from '../../datasource/git-submodules';
+import { logger } from '../../logger';
+import { ManagerConfig, PackageFile } from '../common';
 
 type GitModule = {
   name: string;
@@ -11,7 +12,7 @@ type GitModule = {
 };
 
 async function getUrl(
-  git: Git.SimpleGit,
+  git: SimpleGit,
   gitModulesPath: string,
   submoduleName: string
 ): Promise<string> {
@@ -23,8 +24,8 @@ async function getUrl(
       '--get',
       `submodule.${submoduleName}.url`,
     ])
-  ).trim();
-  if (!path.startsWith('../')) {
+  )?.trim();
+  if (!path?.startsWith('../')) {
     return path;
   }
   const remoteUrl = (
@@ -33,9 +34,17 @@ async function getUrl(
   return URL.resolve(`${remoteUrl}/`, path);
 }
 
+const headRefRe = /ref: refs\/heads\/(?<branch>\w+)\s/;
+
+async function getDefaultBranch(subModuleUrl: string): Promise<string> {
+  const val = await Git().listRemote(['--symref', subModuleUrl, 'HEAD']);
+  return headRefRe.exec(val)?.groups?.branch ?? 'master';
+}
+
 async function getBranch(
   gitModulesPath: string,
-  submoduleName: string
+  submoduleName: string,
+  subModuleUrl: string
 ): Promise<string> {
   return (
     (await Git().raw([
@@ -44,39 +53,41 @@ async function getBranch(
       gitModulesPath,
       '--get',
       `submodule.${submoduleName}.branch`,
-    ])) || 'master'
+    ])) || (await getDefaultBranch(subModuleUrl))
   ).trim();
 }
 
 async function getModules(
-  git: Git.SimpleGit,
+  git: SimpleGit,
   gitModulesPath: string
 ): Promise<GitModule[]> {
-  const modules = (
-    (await git.raw([
-      'config',
-      '--file',
-      gitModulesPath,
-      '--get-regexp',
-      'path',
-    ])) || ''
-  )
-    .trim()
-    .split(/\n/)
-    .filter(s => !!s);
-
   const res: GitModule[] = [];
+  try {
+    const modules = (
+      (await git.raw([
+        'config',
+        '--file',
+        gitModulesPath,
+        '--get-regexp',
+        'path',
+      ])) ?? /* istanbul ignore next: should never happen */ ''
+    )
+      .trim()
+      .split(/\n/)
+      .filter((s) => !!s);
 
-  for (const line of modules) {
-    const [, name, path] = line.split(/submodule\.(.+?)\.path\s(.+)/);
-    res.push({ name, path });
+    for (const line of modules) {
+      const [, name, path] = line.split(/submodule\.(.+?)\.path\s(.+)/);
+      res.push({ name, path });
+    }
+  } catch (err) /* istanbul ignore next */ {
+    logger.warn({ err }, 'Error getting git submodules during extract');
   }
-
   return res;
 }
 
 export default async function extractPackageFile(
-  content: string,
+  _content: string,
   fileName: string,
   config: ManagerConfig
 ): Promise<PackageFile | null> {
@@ -89,21 +100,36 @@ export default async function extractPackageFile(
     return null;
   }
 
-  const deps = await Promise.all(
-    depNames.map(async ({ name, path }) => {
-      const [currentValue] = (await git.subModule(['status', path]))
-        .trim()
-        .split(/[+\s]/);
-      const submoduleBranch = await getBranch(gitModulesPath, name);
-      const subModuleUrl = await getUrl(git, gitModulesPath, name);
-      return {
-        depName: path,
-        registryUrls: [subModuleUrl, submoduleBranch],
-        currentValue,
-        currentDigest: currentValue,
-      };
-    })
-  );
+  const deps = (
+    await Promise.all(
+      depNames.map(async ({ name, path }) => {
+        try {
+          const [currentValue] = (await git.subModule(['status', path]))
+            .trim()
+            .replace(/^[-+]/, '')
+            .split(/\s/);
+          const subModuleUrl = await getUrl(git, gitModulesPath, name);
+          const submoduleBranch = await getBranch(
+            gitModulesPath,
+            name,
+            subModuleUrl
+          );
+          return {
+            depName: path,
+            registryUrls: [subModuleUrl, submoduleBranch],
+            currentValue,
+            currentDigest: currentValue,
+          };
+        } catch (err) /* istanbul ignore next */ {
+          logger.warn(
+            { err },
+            'Error mapping git submodules during extraction'
+          );
+          return null;
+        }
+      })
+    )
+  ).filter(Boolean);
 
   return { deps, datasource: datasourceGitSubmodules.id };
 }

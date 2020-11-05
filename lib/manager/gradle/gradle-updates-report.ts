@@ -1,7 +1,7 @@
 import { join } from 'path';
 import { exists, readFile, writeFile } from 'fs-extra';
-import { logger } from '../../logger';
 import * as datasourceSbtPackage from '../../datasource/sbt-package';
+import { logger } from '../../logger';
 
 export const GRADLE_DEPENDENCY_REPORT_FILENAME = 'gradle-renovate-report.json';
 
@@ -34,7 +34,6 @@ export async function createRenovateGradlePlugin(
   const content = `
 import groovy.json.JsonOutput
 import org.gradle.api.internal.artifacts.dependencies.DefaultExternalModuleDependency
-import org.gradle.api.artifacts.repositories.MavenArtifactRepository
 import java.util.concurrent.ConcurrentLinkedQueue
 
 def output = new ConcurrentLinkedQueue<>();
@@ -55,12 +54,12 @@ allprojects {
         .collect { it.dependencies + it.dependencyConstraints }
         .flatten()
         .findAll { it instanceof DefaultExternalModuleDependency || it instanceof DependencyConstraint }
+        .findAll { 'Pinned to the embedded Kotlin' != it.reason } // Embedded Kotlin dependencies
         .collect { ['name':it.name, 'group':it.group, 'version':it.version] }
       project.dependencies = deps
     }
   }
 }
-
 gradle.buildFinished {
    def outputFile = new File('${GRADLE_DEPENDENCY_REPORT_FILENAME}')
    def json = JsonOutput.toJson(output)
@@ -97,13 +96,13 @@ function mergeDependenciesWithRepositories(
   if (!project.dependencies) {
     return [];
   }
-  return project.dependencies.map(dep => ({
+  return project.dependencies.map((dep) => ({
     ...dep,
     repos: [...project.repositories],
   }));
 }
 
-function flatternDependencies(
+function flattenDependencies(
   accumulator: GradleDependencyWithRepos[],
   currentValue: GradleDependencyWithRepos[]
 ): GradleDependencyWithRepos[] {
@@ -116,13 +115,13 @@ function combineReposOnDuplicatedDependencies(
   currentValue: GradleDependencyWithRepos
 ): GradleDependencyWithRepos[] {
   const existingDependency = accumulator.find(
-    dep => dep.name === currentValue.name && dep.group === currentValue.group
+    (dep) => dep.name === currentValue.name && dep.group === currentValue.group
   );
   if (!existingDependency) {
     accumulator.push(currentValue);
   } else {
     const nonExistingRepos = currentValue.repos.filter(
-      repo => !existingDependency.repos.includes(repo)
+      (repo) => !existingDependency.repos.includes(repo)
     );
     existingDependency.repos.push(...nonExistingRepos);
   }
@@ -148,12 +147,12 @@ export async function extractDependenciesFromUpdatesReport(
 
   const dependencies = gradleProjectConfigurations
     .map(mergeDependenciesWithRepositories, [])
-    .reduce(flatternDependencies, [])
+    .reduce(flattenDependencies, [])
     .reduce(combineReposOnDuplicatedDependencies, []);
 
   return dependencies
-    .map(gradleModule => buildDependency(gradleModule))
-    .map(dep => {
+    .map((gradleModule) => buildDependency(gradleModule))
+    .map((dep) => {
       /* https://github.com/renovatebot/renovate/issues/4627 */
       const { depName, currentValue } = dep;
       if (depName.endsWith('_%%')) {

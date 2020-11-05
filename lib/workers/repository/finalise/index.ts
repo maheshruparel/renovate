@@ -1,15 +1,14 @@
-import { validatePrs } from './validate';
-import { pruneStaleBranches } from './prune';
-import { platform } from '../../../platform';
 import { RenovateConfig } from '../../../config';
+import { platform } from '../../../platform';
+import * as repositoryCache from '../../../util/cache/repository';
+import { pruneStaleBranches } from './prune';
 
 // istanbul ignore next
 export async function finaliseRepo(
   config: RenovateConfig,
   branchList: string[]
 ): Promise<void> {
-  // TODO: Promise.all
-  await validatePrs(config);
+  await repositoryCache.finalize();
   await pruneStaleBranches(config, branchList);
   await platform.ensureIssueClosing(
     `Action Required: Fix Renovate Configuration`

@@ -1,3 +1,4 @@
+import { regEx } from '../../util/regex';
 import { BuildDependency } from './gradle-updates-report';
 
 /**
@@ -23,10 +24,12 @@ interface UpdateFunction {
 }
 
 const groovyQuotes = `(?:["'](?:""|'')?)`;
+const groovyVersionVariable = `(?:${groovyQuotes}\\$)?{?([^\\s"'{}$)]+)}?${groovyQuotes}?`;
+const kotlinVersionVariable = `(?:"\\$)?{?([^\\s"{}$]+?)}?"?`;
 
 // https://github.com/patrikerdes/gradle-use-latest-versions-plugin/blob/8cf9c3917b8b04ba41038923cab270d2adda3aa6/src/main/groovy/se/patrikerdes/DependencyUpdate.groovy#L27-L29
 function moduleStringVersionFormatMatch(dependency: GradleDependency): RegExp {
-  return new RegExp(
+  return regEx(
     `(${groovyQuotes}${dependency.group}:${dependency.name}:)[^$].*?(([:@].*?)?${groovyQuotes})`
   );
 }
@@ -34,16 +37,22 @@ function moduleStringVersionFormatMatch(dependency: GradleDependency): RegExp {
 function groovyPluginStringVersionFormatMatch(
   dependency: GradleDependency
 ): RegExp {
-  return new RegExp(
-    `(id\\s+${groovyQuotes}${dependency.group}${groovyQuotes}\\s+version\\s+${groovyQuotes})[^$].*?(${groovyQuotes})`
+  return regEx(
+    `(id\\s+${groovyQuotes}${dependency.group}${groovyQuotes}\\s+version\\s+${groovyQuotes})[^"$].*?(${groovyQuotes})`
   );
 }
 
 function kotlinPluginStringVersionFormatMatch(
   dependency: GradleDependency
 ): RegExp {
-  return new RegExp(
-    `(id\\("${dependency.group}"\\)\\s+version\\s+")[^$].*?(")`
+  return regEx(`(id\\("${dependency.group}"\\)\\s+version\\s+")[^$].*?(")`);
+}
+
+function dependencyStringVersionFormatMatch(
+  dependency: GradleDependency
+): RegExp {
+  return regEx(
+    `(dependency\\s+['"]${dependency.group}:${dependency.name}:)[^'"]+(['"])`
   );
 }
 
@@ -62,7 +71,7 @@ function allMapFormatOrders(
     `${version}${comma}${group}${comma}${name}`,
     `${name}${comma}${version}${comma}${group}`,
     `${version}${comma}${name}${comma}${group}`,
-  ].map(regex => new RegExp(`${prefix}${regex}${postfix}`));
+  ].map((regex) => regEx(`${prefix}${regex}${postfix}`));
 }
 
 function moduleMapVersionFormatMatch(dependency: GradleDependency): RegExp[] {
@@ -89,7 +98,7 @@ function moduleMapVariableVersionFormatMatch(
   // one capture group: the version variable
   const group = `group\\s*:\\s*${groovyQuotes}${dependency.group}${groovyQuotes}`;
   const name = `name\\s*:\\s*${groovyQuotes}${dependency.name}${groovyQuotes}`;
-  const version = `version\\s*:\\s*(?:${groovyQuotes}\\$)?{?([^\\s"'{}$)]+)}?${groovyQuotes}?`;
+  const version = `version\\s*:\\s*${groovyVersionVariable}`;
   return allMapFormatOrders(group, name, version, '', '');
 }
 
@@ -99,14 +108,14 @@ function moduleKotlinNamedArgumentVariableVersionFormatMatch(
   // one capture group: the version variable
   const group = `group\\s*=\\s*"${dependency.group}"`;
   const name = `name\\s*=\\s*"${dependency.name}"`;
-  const version = `version\\s*=\\s*(?:"\\$)?{?([^\\s"{}$]+?)}?"?`;
+  const version = `version\\s*=\\s*${kotlinVersionVariable}`;
   return allMapFormatOrders(group, name, version, '', '[\\s),]');
 }
 
 function moduleStringVariableInterpolationVersionFormatMatch(
   dependency: GradleDependency
 ): RegExp {
-  return new RegExp(
+  return regEx(
     `${groovyQuotes}${dependency.group}:${dependency.name}:\\$([^{].*?)${groovyQuotes}`
   );
 }
@@ -114,21 +123,63 @@ function moduleStringVariableInterpolationVersionFormatMatch(
 function moduleStringVariableExpressionVersionFormatMatch(
   dependency: GradleDependency
 ): RegExp {
-  return new RegExp(
+  return regEx(
     `${groovyQuotes}${dependency.group}:${dependency.name}:\\$` +
       `{([^{].*?)}${groovyQuotes}`
   );
 }
 
+function groovyPluginVariableVersionFormatMatch(
+  dependency: GradleDependency
+): RegExp {
+  return regEx(
+    `id\\s+${groovyQuotes}${dependency.group}${groovyQuotes}\\s+version\\s+${groovyVersionVariable}(?:\\s|;|})`
+  );
+}
+
+function kotlinPluginVariableVersionFormatMatch(
+  dependency: GradleDependency
+): RegExp {
+  return regEx(
+    `id\\("${dependency.group}"\\)\\s+version\\s+${kotlinVersionVariable}(?:\\s|;|})`
+  );
+}
+
+function kotlinImplementationVariableVersionFormatMatch(
+  dependency: GradleDependency
+): RegExp {
+  // implementation("com.graphql-java", "graphql-java", graphqlVersion)
+  return regEx(
+    `(?:implementation|testImplementation)\\s*\\(\\s*['"]${dependency.group}['"]\\s*,\\s*['"]${dependency.name}['"]\\s*,\\s*([a-zA-Z_][a-zA-Z_0-9]*)\\s*\\)\\s*(?:\\s|;|})`
+  );
+}
+
+function kotlinPluginVariableDotVersionFormatMatch(
+  dependency: GradleDependency
+): RegExp {
+  // id("org.jetbrains.kotlin.jvm").version(kotlinVersion)
+  return regEx(
+    `id\\s*\\(\\s*"${dependency.group}"\\s*\\)\\s*\\.\\s*version\\s*\\(\\s*([a-zA-Z_][a-zA-Z_0-9]*)\\s*\\)\\s*(?:\\s|;|})`
+  );
+}
+
+function dependencyStringVariableExpressionFormatMatch(
+  dependency: GradleDependency
+): RegExp {
+  return regEx(
+    `\\s*dependency\\s+['"]${dependency.group}:${dependency.name}:([^'"]+)['"](?:\\s|;|})`
+  );
+}
+
 function variableDefinitionFormatMatch(variable: string): RegExp {
-  return new RegExp(`(${variable}\\s*=\\s*?["'])(.*)(["'])`);
+  return regEx(`(${variable}\\s*=\\s*?["'])(.*)(["'])`);
 }
 
 function variableMapDefinitionFormatMatch(
   variable: string,
   version: string
 ): RegExp {
-  return new RegExp(`(${variable}\\s*:\\s*?["'])(${version})(["'])`);
+  return regEx(`(${variable}\\s*:\\s*?["'])(${version})(["'])`);
 }
 
 export function collectVersionVariables(
@@ -143,15 +194,25 @@ export function collectVersionVariables(
     const regexes = [
       moduleStringVariableExpressionVersionFormatMatch(dependency),
       moduleStringVariableInterpolationVersionFormatMatch(dependency),
+      groovyPluginVariableVersionFormatMatch(dependency),
+      kotlinPluginVariableVersionFormatMatch(dependency),
+      dependencyStringVariableExpressionFormatMatch(dependency),
       ...moduleMapVariableVersionFormatMatch(dependency),
       ...moduleKotlinNamedArgumentVariableVersionFormatMatch(dependency),
+      kotlinImplementationVariableVersionFormatMatch(dependency),
+      kotlinPluginVariableDotVersionFormatMatch(dependency),
     ];
 
+    const depName = `${dependency.group}:${dependency.name}`;
     for (const regex of regexes) {
       const match = regex.exec(buildGradleContent);
       if (match) {
-        variables[`${dependency.group}:${dependency.name}`] = match[1];
+        variables[depName] = match[1];
       }
+    }
+
+    if (!dep.currentValue && variables[depName]) {
+      dep.currentValue = variables[depName];
     }
   }
 }
@@ -169,15 +230,18 @@ function updateVersionLiterals(
     moduleStringVersionFormatMatch(dependency),
     groovyPluginStringVersionFormatMatch(dependency),
     kotlinPluginStringVersionFormatMatch(dependency),
+    dependencyStringVersionFormatMatch(dependency),
     ...moduleMapVersionFormatMatch(dependency),
     ...moduleKotlinNamedArgumentVersionFormatMatch(dependency),
   ];
+  let result = buildGradleContent;
   for (const regex of regexes) {
-    if (regex.test(buildGradleContent)) {
-      return buildGradleContent.replace(regex, `$1${newVersion}$2`);
+    const match = regex.exec(result);
+    if (match) {
+      result = result.replace(match[0], `${match[1]}${newVersion}${match[2]}`);
     }
   }
-  return null;
+  return result === buildGradleContent ? null : result;
 }
 
 function updateLocalVariables(
@@ -189,15 +253,24 @@ function updateLocalVariables(
     ...moduleMapVariableVersionFormatMatch(dependency),
     moduleStringVariableInterpolationVersionFormatMatch(dependency),
     moduleStringVariableExpressionVersionFormatMatch(dependency),
+    groovyPluginVariableVersionFormatMatch(dependency),
+    kotlinPluginVariableVersionFormatMatch(dependency),
+    kotlinImplementationVariableVersionFormatMatch(dependency),
     ...moduleKotlinNamedArgumentVariableVersionFormatMatch(dependency),
   ];
   for (const regex of regexes) {
     const match = regex.exec(buildGradleContent);
     if (match) {
-      return buildGradleContent.replace(
-        variableDefinitionFormatMatch(match[1]),
-        `$1${newVersion}$3`
+      const variableDefinitionRegex = variableDefinitionFormatMatch(match[1]);
+      const variableDefinitionMatch = variableDefinitionRegex.exec(
+        buildGradleContent
       );
+      if (variableDefinitionMatch) {
+        return buildGradleContent.replace(
+          variableDefinitionMatch[0],
+          `${variableDefinitionMatch[1]}${newVersion}${variableDefinitionMatch[3]}`
+        );
+      }
     }
   }
   return null;
@@ -214,8 +287,8 @@ function updateGlobalVariables(
     const match = regex.exec(buildGradleContent);
     if (match) {
       return buildGradleContent.replace(
-        variableDefinitionFormatMatch(variable),
-        `$1${newVersion}$3`
+        match[0],
+        `${match[1]}${newVersion}${match[3]}`
       );
     }
   }
@@ -237,16 +310,13 @@ function updateGlobalMapVariables(
       const match = regex.exec(buildGradleContent);
       if (match) {
         return buildGradleContent.replace(
-          variableMapDefinitionFormatMatch(variable, dependency.version),
-          `$1${newVersion}$3`
+          match[0],
+          `${match[1]}${newVersion}${match[3]}`
         );
       }
 
       // Remove first path segment of variable and try again
-      variable = variable
-        .split('.')
-        .splice(1)
-        .join('.');
+      variable = variable.split('.').splice(1).join('.');
     }
   }
   return null;
@@ -259,12 +329,15 @@ function updateKotlinVariablesByExtra(
 ): string | null {
   const variable = variables[`${dependency.group}:${dependency.name}`];
   if (variable) {
-    const regex = new RegExp(
+    const regex = regEx(
       `(val ${variable} by extra(?: {|\\()\\s*")(.*)("\\s*[})])`
     );
     const match = regex.exec(buildGradleContent);
     if (match) {
-      return buildGradleContent.replace(regex, `$1${newVersion}$3`);
+      return buildGradleContent.replace(
+        match[0],
+        `${match[1]}${newVersion}${match[3]}`
+      );
     }
   }
   return null;
@@ -277,10 +350,10 @@ function updatePropertyFileGlobalVariables(
 ): string | null {
   const variable = variables[`${dependency.group}:${dependency.name}`];
   if (variable) {
-    const regex = new RegExp(`(${variable}\\s*=\\s*)(.*)`);
+    const regex = regEx(`(${variable}\\s*=\\s*)(.*)`);
     const match = regex.exec(buildGradleContent);
     if (match) {
-      return buildGradleContent.replace(regex, `$1${newVersion}`);
+      return buildGradleContent.replace(match[0], `${match[1]}${newVersion}`);
     }
   }
   return null;

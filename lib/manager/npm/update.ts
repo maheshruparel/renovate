@@ -1,8 +1,8 @@
-import { isEqual } from 'lodash';
-import { inc, ReleaseType } from 'semver';
+import equal from 'fast-deep-equal';
+import { ReleaseType, inc } from 'semver';
 import { logger } from '../../logger';
-import { UpdateDependencyConfig } from '../common';
 import { matchAt, replaceAt } from '../../util/string';
+import { UpdateDependencyConfig } from '../common';
 
 export function bumpPackageVersion(
   content: string,
@@ -62,7 +62,7 @@ export function updateDependency({
   upgrade,
 }: UpdateDependencyConfig): string | null {
   const { depType, managerData } = upgrade;
-  const depName = managerData?.key || upgrade.depName;
+  const depName: string = managerData?.key || upgrade.depName;
   let { newValue } = upgrade;
   if (upgrade.currentRawValue) {
     if (upgrade.currentDigest) {
@@ -86,12 +86,12 @@ export function updateDependency({
   try {
     const parsedContents = JSON.parse(fileContent);
     // Save the old version
-    const oldVersion = parsedContents[depType][depName];
+    const oldVersion: string = parsedContents[depType][depName];
     if (oldVersion === newValue) {
       logger.trace('Version is already updated');
       return bumpPackageVersion(
         fileContent,
-        upgrade.packageJsonVersion,
+        upgrade.packageFileVersion,
         upgrade.bumpVersion
       );
     }
@@ -117,7 +117,7 @@ export function updateDependency({
           newString
         );
         // Compare the parsed JSON structure of old and new
-        if (isEqual(parsedContents, JSON.parse(testContent))) {
+        if (equal(parsedContents, JSON.parse(testContent))) {
           newFileContent = testContent;
           break;
         }
@@ -131,7 +131,7 @@ export function updateDependency({
       );
       return fileContent;
     }
-    if (parsedContents && parsedContents.resolutions) {
+    if (parsedContents?.resolutions) {
       let depKey: string;
       if (parsedContents.resolutions[depName]) {
         depKey = depName;
@@ -152,7 +152,7 @@ export function updateDependency({
           );
         }
         // Look for the old version number
-        const oldResolution = `"${parsedContents.resolutions[depKey]}"`;
+        const oldResolution = `"${String(parsedContents.resolutions[depKey])}"`;
         const newResolution = `"${newValue}"`;
         // Update the file = this is what we want
         parsedContents.resolutions[depKey] = newValue;
@@ -172,7 +172,7 @@ export function updateDependency({
               newResolution
             );
             // Compare the parsed JSON structure of old and new
-            if (isEqual(parsedContents, JSON.parse(testContent))) {
+            if (equal(parsedContents, JSON.parse(testContent))) {
               newFileContent = testContent;
               break;
             }
@@ -182,7 +182,7 @@ export function updateDependency({
     }
     return bumpPackageVersion(
       newFileContent,
-      upgrade.packageJsonVersion,
+      upgrade.packageFileVersion,
       upgrade.bumpVersion
     );
   } catch (err) {

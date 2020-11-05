@@ -1,17 +1,25 @@
 import url from 'url';
-import got from '../../util/got';
+import { HOST_DISABLED } from '../../constants/error-messages';
 import { logger } from '../../logger';
-import { DatasourceError } from '../common';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import { Http } from '../../util/http';
 
-import { id, MAVEN_REPO, MAVEN_REPO_DEPRECATED } from './common';
+import { MAVEN_REPO, id } from './common';
+
+const http: Record<string, Http> = {};
+
+function httpByHostType(hostType: string): Http {
+  if (!http[hostType]) {
+    http[hostType] = new Http(hostType);
+  }
+  return http[hostType];
+}
 
 const getHost = (x: string): string => new url.URL(x).host;
 
-const defaultHosts = [MAVEN_REPO, MAVEN_REPO_DEPRECATED].map(getHost);
-
 function isMavenCentral(pkgUrl: url.URL | string): boolean {
   const host = typeof pkgUrl === 'string' ? pkgUrl : pkgUrl.host;
-  return defaultHosts.includes(host);
+  return getHost(MAVEN_REPO) === host;
 }
 
 function isTemporalError(err: { code: string; statusCode: number }): boolean {
@@ -36,8 +44,14 @@ function isPermissionsIssue(err: { statusCode: number }): boolean {
 
 function isConnectionError(err: { code: string }): boolean {
   return (
-    err.code === 'ERR_TLS_CERT_ALTNAME_INVALID' || err.code === 'ECONNREFUSED'
+    err.code === 'EAI_AGAIN' ||
+    err.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+    err.code === 'ECONNREFUSED'
   );
+}
+
+function isUnsupportedHostError(err: { name: string }): boolean {
+  return err.name === 'UnsupportedProtocolError';
 }
 
 export async function downloadHttpProtocol(
@@ -46,47 +60,62 @@ export async function downloadHttpProtocol(
 ): Promise<string | null> {
   let raw: { body: string };
   try {
-    raw = await got(pkgUrl, {
-      hostType,
-      hooks: {
-        beforeRedirect: [
-          (options: any): void => {
-            if (
-              options.search &&
-              options.search.indexOf('X-Amz-Algorithm') !== -1
-            ) {
-              // maven repository is hosted on amazon, redirect url includes authentication.
-              // eslint-disable-next-line no-param-reassign
-              delete options.auth;
-            }
-          },
-        ],
-      },
-    });
+    const httpClient = httpByHostType(hostType);
+    raw = await httpClient.get(pkgUrl.toString());
+    return raw.body;
   } catch (err) {
     const failedUrl = pkgUrl.toString();
-    if (isNotFoundError(err)) {
-      logger.debug({ failedUrl }, `Url not found`);
+    if (err.message === HOST_DISABLED) {
+      // istanbul ignore next
+      logger.trace({ failedUrl }, 'Host disabled');
+    } else if (isNotFoundError(err)) {
+      logger.trace({ failedUrl }, `Url not found`);
     } else if (isHostError(err)) {
       // istanbul ignore next
-      logger.warn({ failedUrl }, `Cannot connect to ${hostType} host`);
+      logger.debug({ failedUrl }, `Cannot connect to ${hostType} host`);
     } else if (isPermissionsIssue(err)) {
-      logger.warn(
+      logger.debug(
         { failedUrl },
         'Dependency lookup unauthorized. Please add authentication with a hostRule'
       );
     } else if (isTemporalError(err)) {
       logger.debug({ failedUrl, err }, 'Temporary error');
       if (isMavenCentral(pkgUrl)) {
-        throw new DatasourceError(err);
+        throw new ExternalHostError(err);
       }
     } else if (isConnectionError(err)) {
       // istanbul ignore next
       logger.debug({ failedUrl }, 'Connection refused to maven registry');
+    } else if (isUnsupportedHostError(err)) {
+      // istanbul ignore next
+      logger.debug({ failedUrl }, 'Unsupported host');
     } else {
-      logger.warn({ failedUrl, err }, 'Unknown error');
+      logger.info({ failedUrl, err }, 'Unknown error');
     }
     return null;
   }
-  return raw.body;
+}
+
+export async function isHttpResourceExists(
+  pkgUrl: url.URL | string,
+  hostType = id
+): Promise<boolean | string | null> {
+  try {
+    const httpClient = httpByHostType(hostType);
+    const res = await httpClient.head(pkgUrl.toString());
+    const pkgUrlHost = url.parse(pkgUrl.toString()).host;
+    if (pkgUrlHost === 'repo.maven.apache.org') {
+      const timestamp = res?.headers?.['last-modified'] as string;
+      return timestamp || true;
+    }
+    return true;
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      return false;
+    }
+
+    const failedUrl = pkgUrl.toString();
+    logger.debug({ failedUrl }, `Can't check HTTP resource existence`);
+    return null;
+  }
 }

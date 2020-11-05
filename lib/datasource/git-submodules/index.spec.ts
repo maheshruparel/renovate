@@ -1,23 +1,29 @@
-import _simpleGit from 'simple-git/promise';
-import { getPkgReleases, getDigest } from '.';
+import _simpleGit from 'simple-git';
+import { getPkgReleases } from '..';
+import { id as versioning } from '../../versioning/git';
+import { id as datasource, getDigest } from '.';
 
-jest.mock('simple-git/promise');
+jest.mock('simple-git');
 const simpleGit: any = _simpleGit;
 
-const lookupName = 'https://github.com/example/example.git';
-const registryUrls = [lookupName, 'master'];
+const depName = 'https://github.com/example/example.git';
+const registryUrls = [depName, 'master'];
 
 describe('datasource/git-submoduless', () => {
-  beforeEach(() => global.renovateCache.rmAll());
-  describe('getPkgReleases', () => {
+  describe('getReleases', () => {
     it('returns null if response is wrong', async () => {
       simpleGit.mockReturnValue({
         listRemote() {
           return Promise.resolve(null);
         },
       });
-      const versions = await getPkgReleases({ lookupName, registryUrls });
-      expect(versions).toEqual(null);
+      const versions = await getPkgReleases({
+        datasource,
+        versioning,
+        depName,
+        registryUrls,
+      });
+      expect(versions).toBeNull();
     });
     it('returns null if remote call throws exception', async () => {
       simpleGit.mockReturnValue({
@@ -25,8 +31,13 @@ describe('datasource/git-submoduless', () => {
           throw new Error();
         },
       });
-      const versions = await getPkgReleases({ lookupName, registryUrls });
-      expect(versions).toEqual(null);
+      const versions = await getPkgReleases({
+        datasource,
+        versioning,
+        depName,
+        registryUrls,
+      });
+      expect(versions).toBeNull();
     });
     it('returns versions filtered from tags', async () => {
       simpleGit.mockReturnValue({
@@ -36,10 +47,12 @@ describe('datasource/git-submoduless', () => {
       });
 
       const versions = await getPkgReleases({
-        lookupName,
+        datasource,
+        versioning,
+        depName,
         registryUrls,
       });
-      const result = versions.releases.map(x => x.version).sort();
+      const result = versions.releases.map((x) => x.version).sort();
       expect(result).toEqual(['commithash1']);
     });
   });

@@ -1,22 +1,16 @@
-import { exec as _exec } from 'child_process';
-
+import { envMock, exec, mockExecSequence } from '../../../test/execUtil';
+import { env, getName } from '../../../test/util';
 import {
-  resetModule,
-  parsePythonVersion,
   getPythonAlias,
+  parsePythonVersion,
   pythonVersions,
+  resetModule,
 } from './extract';
-import { envMock, mockExecSequence } from '../../../test/execUtil';
-import * as _env from '../../util/exec/env';
-import { mocked } from '../../../test/util';
-
-const exec: jest.Mock<typeof _exec> = _exec as any;
-const env = mocked(_env);
 
 jest.mock('child_process');
 jest.mock('../../util/exec/env');
 
-describe('lib/manager/pip_setup/extract', () => {
+describe(getName(__filename), () => {
   beforeEach(() => {
     jest.resetAllMocks();
     jest.resetModules();
@@ -37,31 +31,11 @@ describe('lib/manager/pip_setup/extract', () => {
         { stdout: 'Python 3.8.0\\n', stderr: '' },
       ]);
       const result = await getPythonAlias();
-      expect(pythonVersions.includes(result)).toBe(true);
+      expect(pythonVersions).toContain(result);
       expect(result).toMatchSnapshot();
+      expect(await getPythonAlias()).toEqual(result);
       expect(execSnapshots).toMatchSnapshot();
+      expect(execSnapshots).toHaveLength(3);
     });
   });
-  // describe('Test for presence of mock lib', () => {
-  //   it('should test if python mock lib is installed', async () => {
-  //     const cp = jest.requireActual('../../util/exec');
-  //     let isMockInstalled = true;
-  //     // when binarysource === docker
-  //     try {
-  //       await cp.exec(`python -c "import mock"`);
-  //     } catch (err) {
-  //       isMockInstalled = false;
-  //     }
-  //     if (!isMockInstalled) {
-  //       try {
-  //         const pythonAlias = await getPythonAlias();
-  //         await exec(`${pythonAlias} -c "from unittest import mock"`);
-  //         isMockInstalled = true;
-  //       } catch (err) {
-  //         isMockInstalled = false;
-  //       }
-  //     }
-  //     expect(isMockInstalled).toBe(true);
-  //   });
-  // });
 });

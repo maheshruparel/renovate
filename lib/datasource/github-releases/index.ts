@@ -1,20 +1,21 @@
-import { api } from '../../platform/github/gh-got-wrapper';
-import { ReleaseResult, GetReleasesConfig } from '../common';
-import { logger } from '../../logger';
-
-const { get: ghGot } = api;
+import * as packageCache from '../../util/cache/package';
+import { GithubHttp } from '../../util/http/github';
+import { GetReleasesConfig, ReleaseResult } from '../common';
 
 export const id = 'github-releases';
 
 const cacheNamespace = 'datasource-github-releases';
 
+const http = new GithubHttp();
+
 type GithubRelease = {
   tag_name: string;
   published_at: string;
+  prerelease: boolean;
 };
 
 /**
- * github.getPkgReleases
+ * github.getReleases
  *
  * This function can be used to fetch releases with a customisable versioning (e.g. semver) and with releases.
  *
@@ -23,11 +24,10 @@ type GithubRelease = {
  *  - Sanitize the versions if desired (e.g. strip out leading 'v')
  *  - Return a dependency object containing sourceUrl string and releases array
  */
-export async function getPkgReleases({
+export async function getReleases({
   lookupName: repo,
 }: GetReleasesConfig): Promise<ReleaseResult | null> {
-  let githubReleases: GithubRelease[];
-  const cachedResult = await renovateCache.get<ReleaseResult>(
+  const cachedResult = await packageCache.get<ReleaseResult>(
     cacheNamespace,
     repo
   );
@@ -35,29 +35,24 @@ export async function getPkgReleases({
   if (cachedResult) {
     return cachedResult;
   }
-  try {
-    const url = `https://api.github.com/repos/${repo}/releases?per_page=100`;
-    const res = await ghGot<GithubRelease[]>(url, {
-      paginate: true,
-    });
-    githubReleases = res.body;
-  } catch (err) /* istanbul ignore next */ {
-    logger.debug({ repo, err }, 'Error retrieving from github');
-  }
-  // istanbul ignore if
-  if (!githubReleases) {
-    return null;
-  }
+  const url = `https://api.github.com/repos/${repo}/releases?per_page=100`;
+  const res = await http.getJson<GithubRelease[]>(url, {
+    paginate: true,
+  });
+  const githubReleases = res.body;
   const dependency: ReleaseResult = {
     sourceUrl: 'https://github.com/' + repo,
     releases: null,
   };
-  dependency.releases = githubReleases.map(({ tag_name, published_at }) => ({
-    version: tag_name,
-    gitRef: tag_name,
-    releaseTimestamp: published_at,
-  }));
+  dependency.releases = githubReleases.map(
+    ({ tag_name, published_at, prerelease }) => ({
+      version: tag_name,
+      gitRef: tag_name,
+      releaseTimestamp: published_at,
+      isStable: prerelease ? false : undefined,
+    })
+  );
   const cacheMinutes = 10;
-  await renovateCache.set(cacheNamespace, repo, dependency, cacheMinutes);
+  await packageCache.set(cacheNamespace, repo, dependency, cacheMinutes);
   return dependency;
 }

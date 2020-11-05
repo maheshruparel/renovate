@@ -1,17 +1,17 @@
 import {
   eq,
-  valid,
   gt,
-  satisfies,
   maxSatisfying,
   minSatisfying,
-} from '@snyk/ruby-semver';
-import { VersioningApi, NewValueConfig } from '../common';
+  satisfies,
+  valid,
+} from '@renovatebot/ruby-semver';
 import { logger } from '../../logger';
-import { parse as parseVersion } from './version';
-import { parse as parseRange, ltr } from './range';
+import { NewValueConfig, VersioningApi } from '../common';
 import { isSingleOperator, isValidOperator } from './operator';
-import { pin, bump, replace } from './strategies';
+import { ltr, parse as parseRange } from './range';
+import { bump, pin, replace } from './strategies';
+import { parse as parseVersion } from './version';
 
 export const id = 'ruby';
 export const displayName = 'Ruby';
@@ -25,7 +25,7 @@ export const supportedRangeStrategies = ['bump', 'extend', 'pin', 'replace'];
 
 function vtrim<T = unknown>(version: T): string | T {
   if (typeof version === 'string') {
-    return version.replace(/^v/, '');
+    return version.replace(/^v/, '').replace(/('|")/g, '');
   }
   return version;
 }
@@ -62,8 +62,8 @@ function isStable(version: string): boolean {
 export const isValid = (input: string): boolean =>
   input
     .split(',')
-    .map(piece => vtrim(piece.trim()))
-    .every(range => {
+    .map((piece) => vtrim(piece.trim()))
+    .every((range) => {
       const { version, operator } = parseRange(range);
 
       return operator
@@ -84,28 +84,51 @@ const getNewValue = ({
   fromVersion,
   toVersion,
 }: NewValueConfig): string => {
-  let result = null;
+  let newValue = null;
   if (isVersion(currentValue)) {
-    return currentValue.startsWith('v') ? 'v' + toVersion : toVersion;
+    newValue = currentValue.startsWith('v') ? 'v' + toVersion : toVersion;
+  } else if (currentValue.replace(/^=\s*/, '') === fromVersion) {
+    newValue = currentValue.replace(fromVersion, toVersion);
+  } else {
+    switch (rangeStrategy) {
+      case 'update-lockfile':
+        if (satisfies(toVersion, currentValue)) {
+          newValue = currentValue;
+        } else {
+          newValue = getNewValue({
+            currentValue,
+            rangeStrategy: 'replace',
+            fromVersion,
+            toVersion,
+          });
+        }
+        break;
+      case 'pin':
+        newValue = pin({ to: vtrim(toVersion) });
+        break;
+      case 'bump':
+        newValue = bump({ range: vtrim(currentValue), to: vtrim(toVersion) });
+        break;
+      case 'replace':
+        newValue = replace({
+          range: vtrim(currentValue),
+          to: vtrim(toVersion),
+        });
+        break;
+      // istanbul ignore next
+      default:
+        logger.warn(`Unsupported strategy ${rangeStrategy}`);
+    }
   }
-  if (currentValue.replace(/^=\s*/, '') === fromVersion) {
-    return currentValue.replace(fromVersion, toVersion);
+  if (/^('|")/.exec(currentValue)) {
+    const delimiter = currentValue[0];
+    return newValue
+      .split(',')
+      .map((element) => element.replace(/^(\s*)/, `$1${delimiter}`))
+      .map((element) => element.replace(/(\s*)$/, `${delimiter}$1`))
+      .join(',');
   }
-  switch (rangeStrategy) {
-    case 'pin':
-      result = pin({ to: vtrim(toVersion) });
-      break;
-    case 'bump':
-      result = bump({ range: vtrim(currentValue), to: vtrim(toVersion) });
-      break;
-    case 'replace':
-      result = replace({ range: vtrim(currentValue), to: vtrim(toVersion) });
-      break;
-    // istanbul ignore next
-    default:
-      logger.warn(`Unsupported strategy ${rangeStrategy}`);
-  }
-  return result;
+  return newValue;
 };
 
 export const sortVersions = (left: string, right: string): number =>

@@ -1,16 +1,18 @@
 // System error
 export const SYSTEM_INSUFFICIENT_DISK_SPACE = 'disk-space';
+export const SYSTEM_INSUFFICIENT_MEMORY = 'out-of-memory';
 
 // Platform Error
 export const PLATFORM_AUTHENTICATION_ERROR = 'authentication-error';
 export const PLATFORM_BAD_CREDENTIALS = 'bad-credentials';
-export const PLATFORM_FAILURE = 'platform-failure';
+export const PLATFORM_GPG_FAILED = 'gpg-failed';
 export const PLATFORM_INTEGRATION_UNAUTHORIZED = 'integration-unauthorized';
 export const PLATFORM_NOT_FOUND = 'platform-not-found';
 export const PLATFORM_RATE_LIMIT_EXCEEDED = 'rate-limit-exceeded';
 
 // Config Error
 export const CONFIG_VALIDATION = 'config-validation';
+export const CONFIG_SECRETS_EXPOSED = 'config-secrets-exposed';
 
 // Repository Error
 export const REPOSITORY_ACCESS_FORBIDDEN = 'forbidden';
@@ -32,15 +34,16 @@ export const REPOSITORY_UNINITIATED = 'uninitiated';
 export const MANAGER_LOCKFILE_ERROR = 'lockfile-error';
 export const MANAGER_NO_PACKAGE_FILES = 'no-package-files';
 
-// Datasource error
-export const DATASOURCE_FAILURE = 'registry-failure';
+// Host error
+export const EXTERNAL_HOST_ERROR = 'external-host-error';
+export const IGNORABLE_HOST_ERROR = 'ignorable-host-error';
+export const HOST_DISABLED = 'host-disabled';
 
 // Worker Error
 export const WORKER_FILE_UPDATE_FAILED = 'update-failure';
 
 // Bundler Error
 export const BUNDLER_INVALID_CREDENTIALS = 'bundler-credentials';
-export const BUNDLER_UNKNOWN_ERROR = 'bundler-unknown';
 
 // Unknown Error
 export const UNKNOWN_ERROR = 'unknown-error';

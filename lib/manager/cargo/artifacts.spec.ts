@@ -1,23 +1,23 @@
-import { join } from 'upath';
-import _fs from 'fs-extra';
 import { exec as _exec } from 'child_process';
-import * as cargo from './artifacts';
-import { platform as _platform } from '../../platform';
-import { mocked } from '../../../test/util';
+import _fs from 'fs-extra';
+import { join } from 'upath';
 import { envMock, mockExecAll } from '../../../test/execUtil';
-import * as _env from '../../util/exec/env';
+import { git, mocked } from '../../../test/util';
 import { setExecConfig } from '../../util/exec';
 import { BinarySource } from '../../util/exec/common';
-import { resetPrefetchedImages } from '../../util/exec/docker';
+import * as docker from '../../util/exec/docker';
+import * as _env from '../../util/exec/env';
+import * as cargo from './artifacts';
 
 jest.mock('fs-extra');
 jest.mock('child_process');
 jest.mock('../../util/exec/env');
+jest.mock('../../util/git');
+jest.mock('../../util/http');
 
 const fs: jest.Mocked<typeof _fs> = _fs as any;
 const exec: jest.Mock<typeof _exec> = _exec as any;
 const env = mocked(_env);
-const platform = mocked(_platform);
 
 const config = {
   // `join` fixes Windows CI
@@ -26,13 +26,13 @@ const config = {
 };
 
 describe('.updateArtifacts()', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetAllMocks();
     jest.resetModules();
 
     env.getChildProcessEnv.mockReturnValue(envMock.basic);
-    setExecConfig(config);
-    resetPrefetchedImages();
+    await setExecConfig(config);
+    docker.resetPrefetchedImages();
   });
   it('returns null if no Cargo.lock found', async () => {
     const updatedDeps = ['dep1'];
@@ -71,7 +71,7 @@ describe('.updateArtifacts()', () => {
     expect(execSnapshots).toMatchSnapshot();
   });
   it('returns updated Cargo.lock', async () => {
-    platform.getFile.mockResolvedValueOnce('Old Cargo.lock');
+    git.getFile.mockResolvedValueOnce('Old Cargo.lock');
     const execSnapshots = mockExecAll(exec);
     fs.readFile.mockResolvedValueOnce('New Cargo.lock' as any);
     const updatedDeps = ['dep1'];
@@ -85,9 +85,26 @@ describe('.updateArtifacts()', () => {
     ).not.toBeNull();
     expect(execSnapshots).toMatchSnapshot();
   });
+
+  it('returns updated Cargo.lock for lockfile maintenance', async () => {
+    git.getFile.mockResolvedValueOnce('Old Cargo.lock');
+    const execSnapshots = mockExecAll(exec);
+    fs.readFile.mockResolvedValueOnce('New Cargo.lock' as any);
+    expect(
+      await cargo.updateArtifacts({
+        packageFileName: 'Cargo.toml',
+        updatedDeps: [],
+        newPackageFileContent: '{}',
+        config: { ...config, updateType: 'lockFileMaintenance' },
+      })
+    ).not.toBeNull();
+    expect(execSnapshots).toMatchSnapshot();
+  });
+
   it('returns updated Cargo.lock with docker', async () => {
-    setExecConfig({ ...config, binarySource: BinarySource.Docker });
-    platform.getFile.mockResolvedValueOnce('Old Cargo.lock');
+    jest.spyOn(docker, 'removeDanglingContainers').mockResolvedValueOnce();
+    await setExecConfig({ ...config, binarySource: BinarySource.Docker });
+    git.getFile.mockResolvedValueOnce('Old Cargo.lock');
     const execSnapshots = mockExecAll(exec);
     fs.readFile.mockResolvedValueOnce('New Cargo.lock' as any);
     const updatedDeps = ['dep1'];

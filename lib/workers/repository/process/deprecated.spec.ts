@@ -1,21 +1,21 @@
+import { RenovateConfig, platform } from '../../../../test/util';
 import { raiseDeprecationWarnings } from './deprecated';
-import { platform } from '../../../../test/util';
 
 describe('workers/repository/process/deprecated', () => {
   describe('raiseDeprecationWarnings()', () => {
     it('returns if onboarding', async () => {
       const config = {};
-      await raiseDeprecationWarnings(config, {});
+      await expect(raiseDeprecationWarnings(config, {})).resolves.not.toThrow();
     });
     it('returns if disabled', async () => {
-      const config = {
+      const config: RenovateConfig = {
         repoIsOnboarded: true,
         suppressNotifications: ['deprecationWarningIssues'],
       };
-      await raiseDeprecationWarnings(config, {});
+      await expect(raiseDeprecationWarnings(config, {})).resolves.not.toThrow();
     });
     it('raises deprecation warnings', async () => {
-      const config = {
+      const config: RenovateConfig = {
         repoIsOnboarded: true,
         suppressNotifications: [],
       };

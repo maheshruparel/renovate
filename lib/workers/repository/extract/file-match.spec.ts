@@ -1,4 +1,7 @@
+import { RenovateConfig } from '../../../../test/util';
 import * as fileMatch from './file-match';
+
+jest.mock('../../../util/git');
 
 describe('workers/repository/extract/file-match', () => {
   const fileList = ['package.json', 'frontend/package.json'];
@@ -39,20 +42,21 @@ describe('workers/repository/extract/file-match', () => {
     });
   });
   describe('getMatchingFiles()', () => {
+    const config: RenovateConfig = {
+      includePaths: [],
+      ignoredPaths: [],
+      manager: 'npm',
+      fileMatch: ['(^|/)package.json$'],
+    };
     it('returns npm files', () => {
       fileList.push('Dockerfile');
-      const res = fileMatch.getMatchingFiles(fileList, 'npm', [
-        '(^|/)package.json$',
-      ]);
+      const res = fileMatch.getMatchingFiles(config, fileList);
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(2);
     });
     it('deduplicates', () => {
-      fileList.push('Dockerfile');
-      const res = fileMatch.getMatchingFiles(fileList, 'npm', [
-        '(^|/)package.json$',
-        'package.json',
-      ]);
+      config.fileMatch.push('package.json');
+      const res = fileMatch.getMatchingFiles(config, fileList);
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(2);
     });

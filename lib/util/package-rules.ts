@@ -1,7 +1,7 @@
 import minimatch from 'minimatch';
+import { PackageRule, UpdateType, mergeChildConfig } from '../config';
 import { logger } from '../logger';
 import * as allVersioning from '../versioning';
-import { mergeChildConfig, PackageRule, UpdateType } from '../config';
 import { regEx } from './regex';
 
 // TODO: move to `../config`
@@ -81,7 +81,7 @@ function matchesRule(inputConfig: Config, packageRule: PackageRule): boolean {
   }
   if (paths.length) {
     const isMatch = paths.some(
-      rulePath =>
+      (rulePath) =>
         packageFile.includes(rulePath) ||
         minimatch(packageFile, rulePath, { dot: true })
     );
@@ -93,7 +93,7 @@ function matchesRule(inputConfig: Config, packageRule: PackageRule): boolean {
   if (depTypeList.length) {
     const isMatch =
       depTypeList.includes(depType) ||
-      (depTypes && depTypes.some(dt => depTypeList.includes(dt)));
+      depTypes?.some((dt) => depTypeList.includes(dt));
     if (!isMatch) {
       return false;
     }
@@ -136,7 +136,7 @@ function matchesRule(inputConfig: Config, packageRule: PackageRule): boolean {
     }
     positiveMatch = true;
   }
-  if (packageNames.length || packagePatterns.length) {
+  if (depName && (packageNames.length || packagePatterns.length)) {
     let isMatch = packageNames.includes(depName);
     // name match is "or" so we check patterns if we didn't match names
     if (!isMatch) {
@@ -147,7 +147,7 @@ function matchesRule(inputConfig: Config, packageRule: PackageRule): boolean {
             : packagePattern
         );
         if (packageRegex.test(depName)) {
-          logger.trace(`${depName} matches against ${packageRegex}`);
+          logger.trace(`${depName} matches against ${String(packageRegex)}`);
           isMatch = true;
         }
       }
@@ -164,14 +164,14 @@ function matchesRule(inputConfig: Config, packageRule: PackageRule): boolean {
     }
     positiveMatch = true;
   }
-  if (excludePackagePatterns.length) {
+  if (depName && excludePackagePatterns.length) {
     let isMatch = false;
     for (const pattern of excludePackagePatterns) {
       const packageRegex = regEx(
         pattern === '^*$' || pattern === '*' ? '.*' : pattern
       );
       if (packageRegex.test(depName)) {
-        logger.trace(`${depName} matches against ${packageRegex}`);
+        logger.trace(`${depName} matches against ${String(packageRegex)}`);
         isMatch = true;
       }
     }
@@ -181,8 +181,8 @@ function matchesRule(inputConfig: Config, packageRule: PackageRule): boolean {
     positiveMatch = true;
   }
   if (sourceUrlPrefixes.length) {
-    const isMatch = sourceUrlPrefixes.some(
-      prefix => sourceUrl && sourceUrl.startsWith(prefix)
+    const isMatch = sourceUrlPrefixes.some((prefix) =>
+      sourceUrl?.startsWith(prefix)
     );
     if (!isMatch) {
       return false;
@@ -239,7 +239,7 @@ export function applyPackageRules<T extends Config>(inputConfig: T): T {
     { dependency: config.depName, packageRules },
     `Checking against ${packageRules.length} packageRules`
   );
-  packageRules.forEach(packageRule => {
+  packageRules.forEach((packageRule) => {
     // This rule is considered matched if there was at least one positive match and no negative matches
     if (matchesRule(config, packageRule)) {
       // Package rule config overrides any existing config

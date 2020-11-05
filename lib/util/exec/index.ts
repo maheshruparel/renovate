@@ -1,26 +1,26 @@
-import { dirname, join } from 'path';
-import { hrtime } from 'process';
 import { ExecOptions as ChildProcessExecOptions } from 'child_process';
-import {
-  generateDockerCommand,
-  removeDockerContainer,
-  removeDanglingContainers,
-} from './docker';
-import { getChildProcessEnv } from './env';
+import { dirname, join } from 'path';
+import { RenovateConfig } from '../../config/common';
 import { logger } from '../../logger';
 import {
   BinarySource,
+  DockerOptions,
   ExecConfig,
   ExecResult,
+  Opt,
   RawExecOptions,
   rawExec,
-  Opt,
-  DockerOptions,
 } from './common';
-import { RenovateConfig } from '../../config';
+import {
+  generateDockerCommand,
+  removeDanglingContainers,
+  removeDockerContainer,
+} from './docker';
+import { getChildProcessEnv } from './env';
 
 const execConfig: ExecConfig = {
   binarySource: null,
+  dockerImagePrefix: null,
   dockerUser: null,
   localDir: null,
   cacheDir: null,
@@ -89,7 +89,7 @@ function dockerEnvVars(
 ): string[] {
   const extraEnvKeys = Object.keys(extraEnv || {});
   return extraEnvKeys.filter(
-    key => typeof childEnv[key] === 'string' && childEnv[key].length > 0
+    (key) => typeof childEnv[key] === 'string' && childEnv[key].length > 0
   );
 }
 
@@ -119,6 +119,8 @@ export async function exec(
   };
   // Set default timeout to 15 minutes
   rawExecOptions.timeout = rawExecOptions.timeout || 15 * 60 * 1000;
+  // Set default max buffer size to 10MB
+  rawExecOptions.maxBuffer = rawExecOptions.maxBuffer || 10 * 1024 * 1024;
 
   let commands = typeof cmd === 'string' ? [cmd] : cmd;
   const useDocker = execConfig.binarySource === BinarySource.Docker && docker;
@@ -140,7 +142,7 @@ export async function exec(
 
   let res: ExecResult | null = null;
   for (const rawExecCommand of commands) {
-    const startTime = hrtime();
+    const startTime = Date.now();
     let timer;
     const { timeout } = rawExecOptions;
     if (useDocker) {
@@ -159,22 +161,22 @@ export async function exec(
       logger.trace({ err }, 'rawExec err');
       clearTimeout(timer);
       if (useDocker) {
-        await removeDockerContainer(docker.image).catch(removeErr => {
+        await removeDockerContainer(docker.image).catch((removeErr: Error) => {
+          const message: string = err.message;
           throw new Error(
-            `Error: "${removeErr.message}" - Original Error: "${err.message}"`
+            `Error: "${removeErr.message}" - Original Error: "${message}"`
           );
         });
       }
       throw err;
     }
     clearTimeout(timer);
-    const duration = hrtime(startTime);
-    const seconds = Math.round(duration[0] + duration[1] / 1e9);
+    const durationMs = Math.round(Date.now() - startTime);
     if (res) {
       logger.debug(
         {
           cmd: rawExecCommand,
-          seconds,
+          durationMs,
           stdout: res.stdout,
           stderr: res.stderr,
         },

@@ -1,5 +1,5 @@
-import { isVersion } from '../../versioning/ruby';
 import { logger } from '../../logger';
+import { isVersion } from '../../versioning/ruby';
 
 const DEP_REGEX = new RegExp('(?<=\\().*(?=\\))');
 export function extractLockFileEntries(
@@ -8,7 +8,7 @@ export function extractLockFileEntries(
   const gemLock = new Map<string, string>();
   try {
     let parsingGemSection = false;
-    lockFileContent.split('\n').forEach(eachLine => {
+    lockFileContent.split('\n').forEach((eachLine) => {
       const whitespace = eachLine.indexOf(eachLine.trim());
       const isGemLine = eachLine.trim().startsWith('GEM');
       if (parsingGemSection === false && whitespace === 0 && isGemLine) {

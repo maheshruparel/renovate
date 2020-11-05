@@ -1,10 +1,8 @@
 import fs from 'fs';
-import _got from '../../util/got';
-import { getDigest, getPkgReleases } from '.';
-import { DATASOURCE_FAILURE } from '../../constants/error-messages';
-
-const got: jest.Mock<any> = _got as any;
-jest.mock('../../util/got');
+import { getPkgReleases } from '..';
+import * as httpMock from '../../../test/httpMock';
+import { EXTERNAL_HOST_ERROR } from '../../constants/error-messages';
+import { id as datasource } from '.';
 
 let res1 = fs.readFileSync(
   'lib/datasource/cdnjs/__fixtures__/d3-force.json',
@@ -18,87 +16,107 @@ let res2 = fs.readFileSync(
 );
 res2 = JSON.parse(res2);
 
-let res3 = fs.readFileSync(
-  'lib/datasource/cdnjs/__fixtures__/KaTeX.json',
-  'utf8'
-);
-res3 = JSON.parse(res3);
+const baseUrl = 'https://api.cdnjs.com/';
+
+const pathFor = (s: string): string =>
+  `/libraries/${s.split('/').shift()}?fields=homepage,repository,assets`;
 
 describe('datasource/cdnjs', () => {
-  describe('getDigest', () => {
-    beforeEach(() => {
-      jest.resetAllMocks();
-      global.repoCache = {};
-      return global.renovateCache.rmAll();
-    });
-    it('returns digest', async () => {
-      got.mockResolvedValueOnce({ body: res3 });
-      const res = await getDigest(
-        { lookupName: 'KaTeX/katex.min.js' },
-        '0.11.1'
-      );
-      expect(res).toBe('sha256-F/Xda58SPdcUCr+xhSGz9MA2zQBPb0ASEYKohl8UCHc=');
-    });
-  });
-  describe('getPkgReleases', () => {
+  describe('getReleases', () => {
     beforeEach(() => {
       jest.clearAllMocks();
-      return global.renovateCache.rmAll();
+      httpMock.setup();
     });
+
+    afterEach(() => {
+      httpMock.reset();
+    });
+
     it('throws for empty result', async () => {
-      got.mockResolvedValueOnce(null);
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).reply(200, null);
       await expect(
-        getPkgReleases({ lookupName: 'foo/bar' })
-      ).rejects.toThrowError(DATASOURCE_FAILURE);
+        getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).rejects.toThrow(EXTERNAL_HOST_ERROR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
-    it('returns null for missing fields', async () => {
-      got.mockResolvedValueOnce({});
-      expect(await getPkgReleases({ lookupName: 'foo/bar' })).toBeNull();
+    it('throws for error', async () => {
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).replyWithError('error');
+      await expect(
+        getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).rejects.toThrow(EXTERNAL_HOST_ERROR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for 404', async () => {
-      got.mockRejectedValueOnce({ statusCode: 404 });
-      expect(await getPkgReleases({ lookupName: 'foo/bar' })).toBeNull();
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).reply(404);
+      expect(
+        await getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
-    it('returns null for 401', async () => {
-      got.mockRejectedValueOnce({ statusCode: 401 });
-      expect(await getPkgReleases({ lookupName: 'foo/bar' })).toBeNull();
+    it('returns null for empty 200 OK', async () => {
+      httpMock
+        .scope(baseUrl)
+        .get(pathFor('doesnotexist/doesnotexist'))
+        .reply(200, {});
+      expect(
+        await getPkgReleases({
+          datasource,
+          depName: 'doesnotexist/doesnotexist',
+        })
+      ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
+    });
+    it('throws for 401', async () => {
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).reply(401);
+      await expect(
+        getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).rejects.toThrow(EXTERNAL_HOST_ERROR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('throws for 429', async () => {
-      got.mockRejectedValueOnce({ statusCode: 429 });
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).reply(429);
       await expect(
-        getPkgReleases({ lookupName: 'foo/bar' })
-      ).rejects.toThrowError(DATASOURCE_FAILURE);
+        getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).rejects.toThrow(EXTERNAL_HOST_ERROR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('throws for 5xx', async () => {
-      got.mockRejectedValueOnce({ statusCode: 502 });
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).reply(502);
       await expect(
-        getPkgReleases({ lookupName: 'foo/bar' })
-      ).rejects.toThrowError(DATASOURCE_FAILURE);
+        getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).rejects.toThrow(EXTERNAL_HOST_ERROR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for unknown error', async () => {
-      got.mockImplementationOnce(() => {
-        throw new Error();
-      });
+      httpMock.scope(baseUrl).get(pathFor('foo/bar')).replyWithError('error');
       await expect(
-        getPkgReleases({ lookupName: 'foo/bar' })
-      ).rejects.toThrowError(DATASOURCE_FAILURE);
-    });
-    it('returns null with wrong auth token', async () => {
-      got.mockRejectedValueOnce({ statusCode: 401 });
-      const res = await getPkgReleases({ lookupName: 'foo/bar' });
-      expect(res).toBeNull();
+        getPkgReleases({ datasource, depName: 'foo/bar' })
+      ).rejects.toThrow(EXTERNAL_HOST_ERROR);
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('processes real data', async () => {
-      got.mockResolvedValueOnce({ body: res1 });
-      const res = await getPkgReleases({ lookupName: 'd3-force/d3-force.js' });
-      expect(res).toMatchSnapshot();
-    });
-    it('filters releases by asset presence', async () => {
-      got.mockResolvedValueOnce({ body: res2 });
+      httpMock
+        .scope(baseUrl)
+        .get(pathFor('d3-force/d3-force.js'))
+        .reply(200, res1);
       const res = await getPkgReleases({
-        lookupName: 'bulma/only/0.7.5/style.css',
+        datasource,
+        depName: 'd3-force/d3-force.js',
       });
       expect(res).toMatchSnapshot();
+      expect(httpMock.getTrace()).toMatchSnapshot();
+    });
+    it('filters releases by asset presence', async () => {
+      httpMock
+        .scope(baseUrl)
+        .get(pathFor('bulma/only/0.7.5/style.css'))
+        .reply(200, res2);
+      const res = await getPkgReleases({
+        datasource,
+        depName: 'bulma/only/0.7.5/style.css',
+      });
+      expect(res).toMatchSnapshot();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 });

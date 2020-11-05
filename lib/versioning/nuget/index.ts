@@ -1,5 +1,5 @@
-import * as generic from '../loose/generic';
 import { VersioningApi } from '../common';
+import * as generic from '../loose/generic';
 
 export const id = 'nuget';
 export const displayName = 'NuGet';
@@ -20,9 +20,9 @@ function parse(version: string): any {
   return { release, suffix: prereleasesuffix || '' };
 }
 
-function compare(version1: string, vervion2: string): number {
+function compare(version1: string, version2: string): number {
   const parsed1 = parse(version1);
-  const parsed2 = parse(vervion2);
+  const parsed2 = parse(version2);
   // istanbul ignore if
   if (!(parsed1 && parsed2)) {
     return 1;

@@ -1,5 +1,5 @@
-import { processResult } from './result';
 import { RenovateConfig, getConfig } from '../../../test/util';
+import { processResult } from './result';
 
 let config: RenovateConfig;
 beforeEach(() => {
@@ -10,7 +10,8 @@ beforeEach(() => {
 describe('workers/repository/result', () => {
   describe('processResult()', () => {
     it('runs', () => {
-      processResult(config, 'done');
+      const result = processResult(config, 'done');
+      expect(result).not.toBeNil();
     });
   });
 });

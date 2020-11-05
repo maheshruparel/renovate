@@ -1,6 +1,6 @@
-import { RenovateConfig } from './common';
 import { logger } from '../logger';
 import { clone } from '../util/clone';
+import { RenovateConfig } from './common';
 import * as definitions from './definitions';
 
 export function mergeChildConfig<T, TChild>(
@@ -21,7 +21,12 @@ export function mergeChildConfig<T, TChild>(
       parentConfig[option.name]
     ) {
       logger.trace(`mergeable option: ${option.name}`);
-      if (option.type === 'array') {
+      if (option.name === 'constraints') {
+        config[option.name] = Object.assign(
+          parentConfig[option.name],
+          childConfig[option.name]
+        );
+      } else if (option.type === 'array') {
         config[option.name] = (parentConfig[option.name] as unknown[]).concat(
           config[option.name]
         );

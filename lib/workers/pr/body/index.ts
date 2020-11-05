@@ -1,23 +1,27 @@
-import handlebars from 'handlebars';
 import { platform } from '../../../platform';
+import * as template from '../../../util/template';
 import { get } from '../../../versioning';
-import { getPrConfigDescription } from './config-description';
-import { getPrBanner } from './banner';
-import { getPrFooter } from './footer';
-import { getPrUpdatesTable } from './updates-table';
-import { getPrNotes, getPrExtraNotes } from './notes';
-import { getChangelogs } from './changelogs';
-import { getControls } from './controls';
 import { BranchConfig } from '../../common';
-
-handlebars.registerHelper('encodeURIComponent', encodeURIComponent);
+import { getChangelogs } from './changelogs';
+import { getPrConfigDescription } from './config-description';
+import { getControls } from './controls';
+import { getPrFooter } from './footer';
+import { getPrHeader } from './header';
+import { getPrExtraNotes, getPrNotes } from './notes';
+import { getPrUpdatesTable } from './updates-table';
 
 function massageUpdateMetadata(config: BranchConfig): void {
-  config.upgrades.forEach(upgrade => {
+  config.upgrades.forEach((upgrade) => {
     /* eslint-disable no-param-reassign */
-    const { homepage, sourceUrl, sourceDirectory, changelogUrl } = upgrade;
+    const {
+      homepage,
+      sourceUrl,
+      sourceDirectory,
+      changelogUrl,
+      dependencyUrl,
+    } = upgrade;
     let depNameLinked = upgrade.depName;
-    const primaryLink = homepage || sourceUrl;
+    const primaryLink = homepage || sourceUrl || dependencyUrl;
     if (primaryLink) {
       depNameLinked = `[${depNameLinked}](${primaryLink})`;
     }
@@ -69,7 +73,7 @@ function massageUpdateMetadata(config: BranchConfig): void {
 export async function getPrBody(config: BranchConfig): Promise<string> {
   massageUpdateMetadata(config);
   const content = {
-    banner: getPrBanner(config),
+    header: getPrHeader(config),
     table: getPrUpdatesTable(config),
     notes: getPrNotes(config) + getPrExtraNotes(config),
     changelogs: getChangelogs(config),
@@ -77,10 +81,8 @@ export async function getPrBody(config: BranchConfig): Promise<string> {
     controls: getControls(),
     footer: getPrFooter(config),
   };
-  const defaultPrBodyTemplate =
-    '{{{banner}}}{{{table}}}{{{notes}}}{{{changelogs}}}{{{configDescription}}}{{{controls}}}{{{footer}}}';
-  const prBodyTemplate = config.prBodyTemplate || defaultPrBodyTemplate;
-  let prBody = handlebars.compile(prBodyTemplate)(content);
+  const prBodyTemplate = config.prBodyTemplate;
+  let prBody = template.compile(prBodyTemplate, content, false);
   prBody = prBody.trim();
   prBody = prBody.replace(/\n\n\n+/g, '\n\n');
   prBody = platform.getPrBody(prBody);

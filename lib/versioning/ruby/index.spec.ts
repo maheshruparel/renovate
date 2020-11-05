@@ -1,5 +1,5 @@
-import { api as semverRuby } from '.';
 import { RangeStrategy } from '..';
+import { api as semverRuby } from '.';
 
 describe('semverRuby', () => {
   describe('.equals', () => {
@@ -278,6 +278,15 @@ describe('semverRuby', () => {
         false
       );
     });
+
+    it('returns null for garbage version input', () => {
+      expect(
+        semverRuby.isLessThanRange('asdf', '> 1.2.2, ~> 2.0.0')
+      ).toBeNull();
+      expect(
+        semverRuby.isLessThanRange(null as string, '> 1.2.2, ~> 2.0.0')
+      ).toBeNull();
+    });
   });
 
   describe('.isValid', () => {
@@ -366,6 +375,14 @@ describe('semverRuby', () => {
         ['1.2.3', '<= 1.0.3', 'pin', '1.0.3', '1.2.3'],
         ['1.2.3', '~> 1.0.3', 'pin', '1.0.4', '1.2.3'],
         ['4.7.8', '~> 4.7, >= 4.7.4', 'pin', '4.7.5', '4.7.8'],
+        [
+          "'>= 3.0.5', '< 3.3'",
+          "'>= 3.0.5', '< 3.2'",
+          'replace',
+          '3.1.5',
+          '3.2.1',
+        ],
+        ["'0.0.11'", "'0.0.10'", 'replace', '0.0.10', '0.0.11'],
       ].forEach(
         ([expected, currentValue, rangeStrategy, fromVersion, toVersion]) => {
           expect(
@@ -505,6 +522,26 @@ describe('semverRuby', () => {
           '2.20.1',
         ],
         ['~> 6.0.0', '~> 5.2.0', 'replace', '5.2.4.1', '6.0.2.1'],
+        ['~> 5.0, < 6', '~> 4.0, < 5', 'replace', '4.7.5', '5.0.0'],
+        ['~> 5.0, < 6', '~> 4.0, < 5', 'replace', '4.7.5', '5.0.1'],
+        ['~> 5.1, < 6', '~> 4.0, < 5', 'replace', '4.7.5', '5.1.0'], // ideally this should be ~> 5.0
+      ].forEach(
+        ([expected, currentValue, rangeStrategy, fromVersion, toVersion]) => {
+          expect(
+            semverRuby.getNewValue({
+              currentValue,
+              rangeStrategy: rangeStrategy as RangeStrategy,
+              fromVersion,
+              toVersion,
+            })
+          ).toEqual(expected);
+        }
+      );
+    });
+    it('returns correct version for update-lockfile strategy', () => {
+      [
+        ['~> 6.0.0', '~> 6.0.0', 'update-lockfile', '6.0.2', '6.0.3'],
+        ['~> 7.0.0', '~> 6.0.0', 'update-lockfile', '6.0.2', '7.0.0'],
       ].forEach(
         ([expected, currentValue, rangeStrategy, fromVersion, toVersion]) => {
           expect(

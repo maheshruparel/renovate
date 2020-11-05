@@ -1,27 +1,27 @@
-import { join } from 'upath';
-import _fs from 'fs-extra';
 import { exec as _exec } from 'child_process';
-import * as gomod from './artifacts';
-import { platform as _platform } from '../../platform';
-import { mocked } from '../../../test/util';
-import { StatusResult } from '../../platform/git/storage';
+import _fs from 'fs-extra';
+import { join } from 'upath';
 import { envMock, mockExecAll } from '../../../test/execUtil';
-import * as _env from '../../util/exec/env';
+import { git, mocked } from '../../../test/util';
 import { setUtilConfig } from '../../util';
 import { BinarySource } from '../../util/exec/common';
-import { resetPrefetchedImages } from '../../util/exec/docker';
+import * as docker from '../../util/exec/docker';
+import * as _env from '../../util/exec/env';
+import { StatusResult } from '../../util/git';
+import * as _hostRules from '../../util/host-rules';
+import * as gomod from './artifacts';
 
 jest.mock('fs-extra');
 jest.mock('child_process');
 jest.mock('../../util/exec/env');
+jest.mock('../../util/git');
 jest.mock('../../util/host-rules');
-
-const hostRules = require('../../util/host-rules');
+jest.mock('../../util/http');
 
 const fs: jest.Mocked<typeof _fs> = _fs as any;
 const exec: jest.Mock<typeof _exec> = _exec as any;
 const env = mocked(_env);
-const platform = mocked(_platform);
+const hostRules = mocked(_hostRules);
 
 const gomod1 = `module github.com/renovate-tests/gomod1
 
@@ -40,6 +40,7 @@ const config = {
   localDir: join('/tmp/github/some/repo'),
   cacheDir: join('/tmp/renovate/cache'),
   dockerUser: 'foobar',
+  constraints: { go: '1.14' },
 };
 
 const goEnv = {
@@ -49,14 +50,14 @@ const goEnv = {
 };
 
 describe('.updateArtifacts()', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetAllMocks();
     jest.resetModules();
 
     delete process.env.GOPATH;
     env.getChildProcessEnv.mockReturnValue({ ...envMock.basic, ...goEnv });
-    setUtilConfig(config);
-    resetPrefetchedImages();
+    await setUtilConfig(config);
+    docker.resetPrefetchedImages();
   });
   it('returns if no go.sum found', async () => {
     const execSnapshots = mockExecAll(exec);
@@ -71,9 +72,10 @@ describe('.updateArtifacts()', () => {
     expect(execSnapshots).toMatchSnapshot();
   });
   it('returns null if unchanged', async () => {
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
     const execSnapshots = mockExecAll(exec);
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: [],
     } as StatusResult);
     expect(
@@ -87,12 +89,13 @@ describe('.updateArtifacts()', () => {
     expect(execSnapshots).toMatchSnapshot();
   });
   it('returns updated go.sum', async () => {
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
     const execSnapshots = mockExecAll(exec);
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['go.sum'],
     } as StatusResult);
-    fs.readFile.mockReturnValueOnce('New go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('New go.sum' as any);
     expect(
       await gomod.updateArtifacts({
         packageFileName: 'go.mod',
@@ -103,14 +106,52 @@ describe('.updateArtifacts()', () => {
     ).not.toBeNull();
     expect(execSnapshots).toMatchSnapshot();
   });
-  it('supports docker mode without credentials', async () => {
-    setUtilConfig({ ...config, binarySource: BinarySource.Docker });
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+  it('supports vendor directory update', async () => {
+    const foo = join('vendor/github.com/foo/foo/go.mod');
+    const bar = join('vendor/github.com/bar/bar/go.mod');
+    const baz = join('vendor/github.com/baz/baz/go.mod');
+
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('modules.txt content' as any); // vendor modules filename
     const execSnapshots = mockExecAll(exec);
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
+      modified: ['go.sum', foo],
+      not_added: [bar],
+      deleted: [baz],
+    } as StatusResult);
+    fs.readFile.mockResolvedValueOnce('New go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('Foo go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('Bar go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('New go.mod' as any);
+    const res = await gomod.updateArtifacts({
+      packageFileName: 'go.mod',
+      updatedDeps: [],
+      newPackageFileContent: gomod1,
+      config: {
+        ...config,
+        postUpdateOptions: ['gomodTidy'],
+      },
+    });
+    expect(res).not.toBeNull();
+    expect(res?.map(({ file }) => file)).toEqual([
+      { contents: 'New go.sum', name: 'go.sum' },
+      { contents: 'Foo go.sum', name: foo },
+      { contents: 'Bar go.sum', name: bar },
+      { contents: baz, name: '|delete|' },
+      { contents: 'New go.mod', name: 'go.mod' },
+    ]);
+    expect(execSnapshots).toMatchSnapshot();
+  });
+  it('supports docker mode without credentials', async () => {
+    jest.spyOn(docker, 'removeDanglingContainers').mockResolvedValueOnce();
+    await setUtilConfig({ ...config, binarySource: BinarySource.Docker });
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
+    const execSnapshots = mockExecAll(exec);
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['go.sum'],
     } as StatusResult);
-    fs.readFile.mockReturnValueOnce('New go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('New go.sum' as any);
     expect(
       await gomod.updateArtifacts({
         packageFileName: 'go.mod',
@@ -125,12 +166,13 @@ describe('.updateArtifacts()', () => {
     expect(execSnapshots).toMatchSnapshot();
   });
   it('supports global mode', async () => {
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
     const execSnapshots = mockExecAll(exec);
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['go.sum'],
     } as StatusResult);
-    fs.readFile.mockReturnValueOnce('New go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('New go.sum' as any);
     expect(
       await gomod.updateArtifacts({
         packageFileName: 'go.mod',
@@ -145,16 +187,18 @@ describe('.updateArtifacts()', () => {
     expect(execSnapshots).toMatchSnapshot();
   });
   it('supports docker mode with credentials', async () => {
-    setUtilConfig({ ...config, binarySource: BinarySource.Docker });
+    jest.spyOn(docker, 'removeDanglingContainers').mockResolvedValueOnce();
+    await setUtilConfig({ ...config, binarySource: BinarySource.Docker });
     hostRules.find.mockReturnValueOnce({
       token: 'some-token',
     });
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
     const execSnapshots = mockExecAll(exec);
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['go.sum'],
     } as StatusResult);
-    fs.readFile.mockReturnValueOnce('New go.sum' as any);
+    fs.readFile.mockResolvedValueOnce('New go.sum' as any);
     expect(
       await gomod.updateArtifacts({
         packageFileName: 'go.mod',
@@ -168,41 +212,38 @@ describe('.updateArtifacts()', () => {
     ).not.toBeNull();
     expect(execSnapshots).toMatchSnapshot();
   });
-  it('supports docker mode with credentials and appMode enabled', async () => {
-    setUtilConfig({ ...config, binarySource: BinarySource.Docker });
-    hostRules.find.mockReturnValueOnce({
-      token: 'some-token',
-    });
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+  it('supports docker mode with goModTidy', async () => {
+    jest.spyOn(docker, 'removeDanglingContainers').mockResolvedValueOnce();
+    await setUtilConfig({ ...config, binarySource: BinarySource.Docker });
+    hostRules.find.mockReturnValueOnce({});
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
     const execSnapshots = mockExecAll(exec);
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['go.sum'],
     } as StatusResult);
     fs.readFile.mockResolvedValueOnce('New go.sum 1' as any);
     fs.readFile.mockResolvedValueOnce('New go.sum 2' as any);
     fs.readFile.mockResolvedValueOnce('New go.sum 3' as any);
-    try {
-      global.appMode = true;
-      expect(
-        await gomod.updateArtifacts({
-          packageFileName: 'go.mod',
-          updatedDeps: [],
-          newPackageFileContent: gomod1,
-          config: {
-            ...config,
-            binarySource: BinarySource.Docker,
-            postUpdateOptions: ['gomodTidy'],
-          },
-        })
-      ).not.toBeNull();
-      expect(execSnapshots).toMatchSnapshot();
-    } finally {
-      delete global.appMode;
-    }
+    fs.readFile.mockResolvedValueOnce('New go.mod' as any);
+    expect(
+      await gomod.updateArtifacts({
+        packageFileName: 'go.mod',
+        updatedDeps: [],
+        newPackageFileContent: gomod1,
+        config: {
+          ...config,
+          binarySource: BinarySource.Docker,
+          postUpdateOptions: ['gomodTidy'],
+        },
+      })
+    ).not.toBeNull();
+    expect(execSnapshots).toMatchSnapshot();
   });
   it('catches errors', async () => {
     const execSnapshots = mockExecAll(exec);
-    platform.getFile.mockResolvedValueOnce('Current go.sum');
+    fs.readFile.mockResolvedValueOnce('Current go.sum' as any);
+    fs.readFile.mockResolvedValueOnce(null as any); // vendor modules filename
     fs.outputFile.mockImplementationOnce(() => {
       throw new Error('This update totally doesnt work');
     });

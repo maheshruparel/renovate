@@ -1,73 +1,39 @@
-import got from 'got';
-import Git from 'simple-git/promise';
-import { RenovateConfig } from '../config/common';
-import { CommitFilesConfig } from './git/storage';
-import { BranchStatus } from '../types';
+import {
+  BranchStatus,
+  PrState,
+  VulnerabilityAlert as _VulnerabilityAlert,
+} from '../types';
 
-export interface FileData {
-  name: string;
-  contents: string | Buffer;
+export type VulnerabilityAlert = _VulnerabilityAlert;
+
+type VulnerabilityKey = string;
+type VulnerabilityRangeKey = string;
+type VulnerabilityPatch = string;
+export type AggregatedVulnerabilities = Record<
+  VulnerabilityKey,
+  Record<VulnerabilityRangeKey, VulnerabilityPatch>
+>;
+
+export interface PlatformParams {
+  endpoint?: string;
+  token?: string;
+  username?: string;
+  password?: string;
 }
 
-export interface GotApiOptions {
-  useCache?: boolean;
-  hostType?: string;
-  body?: any;
-}
-
-export type GotResponse<T extends object = any> = got.Response<T>;
-
-export interface GotApi<TOptions extends object = any> {
-  get<T extends object = any>(
-    url: string,
-    options?: GotApiOptions & TOptions
-  ): Promise<GotResponse<T>>;
-  post<T extends object = any>(
-    url: string,
-    options?: GotApiOptions & TOptions
-  ): Promise<GotResponse<T>>;
-  put<T extends object = any>(
-    url: string,
-    options?: GotApiOptions & TOptions
-  ): Promise<GotResponse<T>>;
-  patch<T extends object = any>(
-    url: string,
-    options?: GotApiOptions & TOptions
-  ): Promise<GotResponse<T>>;
-  head<T extends object = any>(
-    url: string,
-    options?: GotApiOptions & TOptions
-  ): Promise<GotResponse<T>>;
-  delete<T extends object = any>(
-    url: string,
-    options?: GotApiOptions & TOptions
-  ): Promise<GotResponse<T>>;
-
-  reset(): void;
-
-  setBaseUrl(endpoint: string): void;
-}
-
-export interface PlatformConfig {
+export interface PlatformResult {
   endpoint: string;
   renovateUsername?: any;
   gitAuthor?: any;
 }
 
-export interface RepoConfig {
-  baseBranch: string;
-  endpoint?: string;
-  renovateUsername?: any;
-  gitAuthor?: any;
+export interface RepoResult {
+  defaultBranch: string;
   isFork: boolean;
 }
 
 export interface RepoParams {
-  azureWorkItemId?: number; // shouldn't this be configurable within a renovate.json?
-  bbUseDefaultReviewers?: boolean; // shouldn't this be configurable within a renovate.json?
-  gitPrivateKey?: string;
   localDir: string;
-  optimizeForDisabled: boolean;
   repository: string;
   endpoint?: string;
   forkMode?: string;
@@ -77,15 +43,28 @@ export interface RepoParams {
 }
 
 /**
- * TODO: Proper typing
+ *
  */
-export type Pr = {
-  branchName: string;
-  title: string;
-  state: string;
+export interface Pr {
+  body?: string;
+  sourceBranch: string;
+  canMerge?: boolean;
+  canMergeReason?: string;
+  createdAt?: string;
+  displayNumber?: string;
+  hasAssignees?: boolean;
+  hasReviewers?: boolean;
   isConflicted?: boolean;
-  isModified?: boolean;
-} & Record<string, any>;
+  labels?: string[];
+  number?: number;
+  reviewers?: string[];
+  sha?: string;
+  sourceRepo?: string;
+  state: string;
+  targetBranch?: string;
+  title: string;
+  isDraft?: boolean;
+}
 
 /**
  * TODO: Proper typing
@@ -98,19 +77,28 @@ export interface Issue {
 }
 export type PlatformPrOptions = {
   azureAutoComplete?: boolean;
-  statusCheckVerify?: boolean;
+  azureWorkItemId?: number;
+  bbUseDefaultReviewers?: boolean;
   gitLabAutomerge?: boolean;
 };
 export interface CreatePRConfig {
-  branchName: string;
+  sourceBranch: string;
+  targetBranch: string;
   prTitle: string;
   prBody: string;
   labels?: string[] | null;
-  useDefaultBranch?: boolean;
   platformOptions?: PlatformPrOptions;
+  draftPR?: boolean;
+}
+export interface UpdatePrConfig {
+  number: number;
+  prTitle: string;
+  prBody?: string;
+  state?: PrState.Open | PrState.Closed;
 }
 export interface EnsureIssueConfig {
   title: string;
+  reuseTitle?: string;
   body: string;
   once?: boolean;
   shouldReOpen?: boolean;
@@ -125,7 +113,7 @@ export interface BranchStatusConfig {
 export interface FindPRConfig {
   branchName: string;
   prTitle?: string | null;
-  state?: 'open' | 'closed' | '!open' | 'all';
+  state?: PrState.Open | PrState.Closed | PrState.NotOpen | PrState.All;
   refreshCache?: boolean;
 }
 export interface EnsureCommentConfig {
@@ -133,10 +121,20 @@ export interface EnsureCommentConfig {
   topic: string;
   content: string;
 }
-/**
- * TODO: Proper typing
- */
-export type VulnerabilityAlert = any;
+
+export interface EnsureCommentRemovalConfigByTopic {
+  number: number;
+  topic: string;
+}
+export interface EnsureCommentRemovalConfigByContent {
+  number: number;
+  content: string;
+}
+export interface EnsureCommentRemovalConfig {
+  number: number;
+  content?: string;
+  topic?: string;
+}
 
 export type EnsureIssueResult = 'updated' | 'created';
 
@@ -144,27 +142,20 @@ export interface Platform {
   findIssue(title: string): Promise<Issue | null>;
   getIssueList(): Promise<Issue[]>;
   getVulnerabilityAlerts(): Promise<VulnerabilityAlert[]>;
-  getCommitMessages(): Promise<string[]>;
-  setBranchPrefix(branchPrefix: string): Promise<void>;
-  initRepo(config: RepoParams): Promise<RepoConfig>;
-  cleanRepo(): Promise<void>;
-  getPrFiles(prNo: number): Promise<string[]>;
+  getJsonFile(fileName: string): Promise<any | null>;
+  initRepo(config: RepoParams): Promise<RepoResult>;
   getPrList(): Promise<Pr[]>;
-  getAllRenovateBranches(branchPrefix: string): Promise<string[]>;
   ensureIssueClosing(title: string): Promise<void>;
-  getFileList(): Promise<string[]>;
   ensureIssue(
     issueConfig: EnsureIssueConfig
   ): Promise<EnsureIssueResult | null>;
   getPrBody(prBody: string): string;
-  updatePr(number: number, prTitle: string, prBody?: string): Promise<void>;
+  updatePr(prConfig: UpdatePrConfig): Promise<void>;
   mergePr(number: number, branchName: string): Promise<boolean>;
   addReviewers(number: number, reviewers: string[]): Promise<void>;
   addAssignees(number: number, assignees: string[]): Promise<void>;
   createPr(prConfig: CreatePRConfig): Promise<Pr>;
-  getBranchLastCommitTime(branchName: string): Promise<Date>;
   getRepos(): Promise<string[]>;
-  isBranchStale(branchName: string): Promise<boolean>;
   getRepoForceRebase(): Promise<boolean>;
   deleteLabel(number: number, label: string): Promise<void>;
   setBranchStatus(branchStatusConfig: BranchStatusConfig): Promise<void>;
@@ -172,21 +163,19 @@ export interface Platform {
     branchName: string,
     context: string
   ): Promise<BranchStatus | null>;
-  ensureCommentRemoval(number: number, subject: string): Promise<void>;
-  deleteBranch(branchName: string, closePr?: boolean): Promise<void>;
+  ensureCommentRemoval(
+    ensureCommentRemoval:
+      | EnsureCommentRemovalConfigByTopic
+      | EnsureCommentRemovalConfigByContent
+  ): Promise<void>;
   ensureComment(ensureComment: EnsureCommentConfig): Promise<boolean>;
-  branchExists(branchName: string): Promise<boolean>;
-  setBaseBranch(baseBranch?: string): Promise<void>;
-  commitFilesToBranch(commitFile: CommitFilesConfig): Promise<string | null>;
   getPr(number: number): Promise<Pr>;
   findPr(findPRConfig: FindPRConfig): Promise<Pr>;
-  mergeBranch(branchName: string): Promise<void>;
+  refreshPr?(number: number): Promise<void>;
   getBranchStatus(
     branchName: string,
     requiredStatusChecks?: string[] | null
   ): Promise<BranchStatus>;
   getBranchPr(branchName: string): Promise<Pr | null>;
-  getRepoStatus(): Promise<Git.StatusResult>;
-  getFile(lockFileName: string, branchName?: string): Promise<string>;
-  initPlatform(config: RenovateConfig): Promise<PlatformConfig>;
+  initPlatform(config: PlatformParams): Promise<PlatformResult>;
 }

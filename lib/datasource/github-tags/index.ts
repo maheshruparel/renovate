@@ -1,21 +1,31 @@
-import { api } from '../../platform/github/gh-got-wrapper';
-import { ReleaseResult, GetReleasesConfig, DigestConfig } from '../common';
+import URL from 'url';
 import { logger } from '../../logger';
-
-const { get: ghGot } = api;
+import * as packageCache from '../../util/cache/package';
+import { GithubHttp } from '../../util/http/github';
+import { DigestConfig, GetReleasesConfig, ReleaseResult } from '../common';
 
 export const id = 'github-tags';
+
+const http = new GithubHttp();
 
 const cacheNamespace = 'datasource-github-tags';
 function getCacheKey(repo: string, type: string): string {
   return `${repo}:${type}`;
 }
 
+interface TagResponse {
+  object: {
+    type: string;
+    url: string;
+    sha: string;
+  };
+}
+
 async function getTagCommit(
   githubRepo: string,
   tag: string
 ): Promise<string | null> {
-  const cachedResult = await renovateCache.get<string>(
+  const cachedResult = await packageCache.get<string>(
     cacheNamespace,
     getCacheKey(githubRepo, `tag-${tag}`)
   );
@@ -26,11 +36,11 @@ async function getTagCommit(
   let digest: string;
   try {
     const url = `https://api.github.com/repos/${githubRepo}/git/refs/tags/${tag}`;
-    const res = (await ghGot(url)).body.object;
+    const res = (await http.getJson<TagResponse>(url)).body.object;
     if (res.type === 'commit') {
       digest = res.sha;
     } else if (res.type === 'tag') {
-      digest = (await ghGot(res.url)).body.object.sha;
+      digest = (await http.getJson<TagResponse>(res.url)).body.object.sha;
     } else {
       logger.warn({ res }, 'Unknown git tag refs type');
     }
@@ -44,7 +54,7 @@ async function getTagCommit(
     return null;
   }
   const cacheMinutes = 120;
-  await renovateCache.set(
+  await packageCache.set(
     cacheNamespace,
     getCacheKey(githubRepo, `tag-${tag}`),
     digest,
@@ -64,10 +74,10 @@ export async function getDigest(
   { lookupName: githubRepo }: Partial<DigestConfig>,
   newValue?: string
 ): Promise<string | null> {
-  if (newValue && newValue.length) {
+  if (newValue?.length) {
     return getTagCommit(githubRepo, newValue);
   }
-  const cachedResult = await renovateCache.get(
+  const cachedResult = await packageCache.get<string>(
     cacheNamespace,
     getCacheKey(githubRepo, 'commit')
   );
@@ -78,7 +88,8 @@ export async function getDigest(
   let digest: string;
   try {
     const url = `https://api.github.com/repos/${githubRepo}/commits?per_page=1`;
-    digest = (await ghGot(url)).body[0].sha;
+    const res = await http.getJson<{ sha: string }[]>(url);
+    digest = res.body[0].sha;
   } catch (err) {
     logger.debug(
       { githubRepo, err },
@@ -89,7 +100,7 @@ export async function getDigest(
     return null;
   }
   const cacheMinutes = 10;
-  await renovateCache.set(
+  await packageCache.set(
     cacheNamespace,
     getCacheKey(githubRepo, 'commit'),
     digest,
@@ -99,7 +110,7 @@ export async function getDigest(
 }
 
 /**
- * github.getPkgReleases
+ * github.getReleases
  *
  * This function can be used to fetch releases with a customisable versioning (e.g. semver) and with either tags or releases.
  *
@@ -108,11 +119,11 @@ export async function getDigest(
  *  - Sanitize the versions if desired (e.g. strip out leading 'v')
  *  - Return a dependency object containing sourceUrl string and releases array
  */
-export async function getPkgReleases({
+export async function getReleases({
+  registryUrl: depHost,
   lookupName: repo,
 }: GetReleasesConfig): Promise<ReleaseResult | null> {
-  let versions: string[];
-  const cachedResult = await renovateCache.get<ReleaseResult>(
+  const cachedResult = await packageCache.get<ReleaseResult>(
     cacheNamespace,
     getCacheKey(repo, 'tags')
   );
@@ -120,34 +131,34 @@ export async function getPkgReleases({
   if (cachedResult) {
     return cachedResult;
   }
-  try {
-    // tag
-    const url = `https://api.github.com/repos/${repo}/tags?per_page=100`;
-    type GitHubTag = {
-      name: string;
-    }[];
 
-    versions = (
-      await ghGot<GitHubTag>(url, {
-        paginate: true,
-      })
-    ).body.map(o => o.name);
-  } catch (err) {
-    logger.debug({ repo, err }, 'Error retrieving from github');
-  }
-  if (!versions) {
-    return null;
-  }
+  // default to GitHub.com if no GHE host is specified.
+  const sourceUrlBase = depHost ?? `https://github.com/`;
+  const apiBaseUrl = depHost
+    ? URL.resolve(depHost, 'api/v3/')
+    : `https://api.github.com/`;
+
+  // tag
+  const url = URL.resolve(apiBaseUrl, `repos/${repo}/tags?per_page=100`);
+  type GitHubTag = {
+    name: string;
+  }[];
+
+  const versions = (
+    await http.getJson<GitHubTag>(url, {
+      paginate: true,
+    })
+  ).body.map((o) => o.name);
   const dependency: ReleaseResult = {
-    sourceUrl: 'https://github.com/' + repo,
+    sourceUrl: URL.resolve(sourceUrlBase, repo),
     releases: null,
   };
-  dependency.releases = versions.map(version => ({
+  dependency.releases = versions.map((version) => ({
     version,
     gitRef: version,
   }));
   const cacheMinutes = 10;
-  await renovateCache.set(
+  await packageCache.set(
     cacheNamespace,
     getCacheKey(repo, 'tags'),
     dependency,

@@ -103,6 +103,24 @@ describe('semver.isSingleVersion()', () => {
   });
 });
 describe('semver.getNewValue()', () => {
+  it('returns if empty or *', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: null,
+        rangeStrategy: 'bump',
+        fromVersion: '1.0.0',
+        toVersion: '1.1.0',
+      })
+    ).toBeNull();
+    expect(
+      semver.getNewValue({
+        currentValue: '*',
+        rangeStrategy: 'bump',
+        fromVersion: '1.0.0',
+        toVersion: '1.1.0',
+      })
+    ).toEqual('*');
+  });
   it('bumps equals', () => {
     expect(
       semver.getNewValue({
@@ -361,5 +379,55 @@ describe('semver.getNewValue()', () => {
         toVersion: '1.5.0',
       })
     ).toEqual('<= 1.5.0');
+  });
+  it('bumps complex ranges', () => {
+    expect(
+      semver.getNewValue({
+        currentValue: '>= 0.1.21, < 0.2.0',
+        rangeStrategy: 'bump',
+        fromVersion: '0.1.21',
+        toVersion: '0.1.24',
+      })
+    ).toEqual('>= 0.1.24, < 0.2.0');
+    expect(
+      semver.getNewValue({
+        currentValue: '>= 0.1.21, <= 0.2.0',
+        rangeStrategy: 'bump',
+        fromVersion: '0.1.21',
+        toVersion: '0.1.24',
+      })
+    ).toEqual('>= 0.1.24, <= 0.2.0');
+    expect(
+      semver.getNewValue({
+        currentValue: '>= 0.0.1, <= 0.1',
+        rangeStrategy: 'bump',
+        fromVersion: '0.0.1',
+        toVersion: '0.0.2',
+      })
+    ).toEqual('>= 0.0.2, <= 0.1');
+    expect(
+      semver.getNewValue({
+        currentValue: '>= 1.2.3, <= 1',
+        rangeStrategy: 'bump',
+        fromVersion: '1.2.3',
+        toVersion: '1.2.4',
+      })
+    ).toEqual('>= 1.2.4, <= 1');
+    expect(
+      semver.getNewValue({
+        currentValue: '>= 1.2.3, <= 1.0',
+        rangeStrategy: 'bump',
+        fromVersion: '1.2.3',
+        toVersion: '1.2.4',
+      })
+    ).toEqual('>= 1.2.4, <= 1.2');
+    expect(
+      semver.getNewValue({
+        currentValue: '>= 0.0.1, < 0.1',
+        rangeStrategy: 'bump',
+        fromVersion: '0.1.0',
+        toVersion: '0.2.1',
+      })
+    ).toEqual('>= 0.2.1, < 0.3');
   });
 });

@@ -1,37 +1,39 @@
-import { join } from 'upath';
-import _fs from 'fs-extra';
 import { exec as _exec } from 'child_process';
-import Git from 'simple-git/promise';
-import { platform as _platform } from '../../platform';
-import { updateArtifacts } from '.';
-import * as _datasource from '../../datasource/docker';
-import { mocked } from '../../../test/util';
+import _fs from 'fs-extra';
+import { join } from 'upath';
 import { envMock, mockExecAll } from '../../../test/execUtil';
-import * as _env from '../../util/exec/env';
+import { git, mocked } from '../../../test/util';
+import * as _datasource from '../../datasource';
 import { setExecConfig } from '../../util/exec';
 import { BinarySource } from '../../util/exec/common';
+import * as _env from '../../util/exec/env';
+import { StatusResult } from '../../util/git';
+import { updateArtifacts } from '.';
 
 jest.mock('fs-extra');
 jest.mock('child_process');
 jest.mock('../../util/exec/env');
+jest.mock('../../util/git');
 jest.mock('../../platform');
-jest.mock('../../datasource/docker');
+jest.mock('../../datasource');
 
 const fs: jest.Mocked<typeof _fs> = _fs as any;
 const exec: jest.Mock<typeof _exec> = _exec as any;
 const env = mocked(_env);
-const platform = mocked(_platform);
 const datasource = mocked(_datasource);
+
+delete process.env.CP_HOME_DIR;
 
 const config = {
   localDir: join('/tmp/github/some/repo'),
+  cacheDir: join('/tmp/cache'),
 };
 
 describe('.updateArtifacts()', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetAllMocks();
     env.getChildProcessEnv.mockReturnValue(envMock.basic);
-    setExecConfig(config);
+    await setExecConfig(config);
 
     datasource.getPkgReleases.mockResolvedValue({
       releases: [
@@ -97,10 +99,10 @@ describe('.updateArtifacts()', () => {
   });
   it('returns null if unchanged', async () => {
     const execSnapshots = mockExecAll(exec);
-    platform.getFile.mockResolvedValueOnce('Current Podfile');
-    platform.getRepoStatus.mockResolvedValueOnce({
+    fs.readFile.mockResolvedValueOnce('Current Podfile' as any);
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: [],
-    } as Git.StatusResult);
+    } as StatusResult);
     fs.readFile.mockResolvedValueOnce('Current Podfile' as any);
     expect(
       await updateArtifacts({
@@ -114,12 +116,33 @@ describe('.updateArtifacts()', () => {
   });
   it('returns updated Podfile', async () => {
     const execSnapshots = mockExecAll(exec);
-    setExecConfig({ ...config, binarySource: BinarySource.Docker });
-    platform.getFile.mockResolvedValueOnce('Old Podfile');
-    platform.getRepoStatus.mockResolvedValueOnce({
+    await setExecConfig({ ...config, binarySource: BinarySource.Docker });
+    fs.readFile.mockResolvedValueOnce('Old Podfile' as any);
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['Podfile.lock'],
-    } as Git.StatusResult);
+    } as StatusResult);
     fs.readFile.mockResolvedValueOnce('New Podfile' as any);
+    expect(
+      await updateArtifacts({
+        packageFileName: 'Podfile',
+        updatedDeps: ['foo'],
+        newPackageFileContent: 'plugin "cocoapods-acknowledgements"',
+        config,
+      })
+    ).toMatchSnapshot();
+    expect(execSnapshots).toMatchSnapshot();
+  });
+  it('returns updated Podfile and Pods files', async () => {
+    const execSnapshots = mockExecAll(exec);
+    await setExecConfig({ ...config, binarySource: BinarySource.Docker });
+    fs.readFile.mockResolvedValueOnce('Old Manifest.lock' as any);
+    fs.readFile.mockResolvedValueOnce('New Podfile' as any);
+    fs.readFile.mockResolvedValueOnce('Pods manifest' as any);
+    git.getRepoStatus.mockResolvedValueOnce({
+      not_added: ['Pods/New'],
+      modified: ['Podfile.lock', 'Pods/Manifest.lock'],
+      deleted: ['Pods/Deleted'],
+    } as StatusResult);
     expect(
       await updateArtifacts({
         packageFileName: 'Podfile',
@@ -132,7 +155,7 @@ describe('.updateArtifacts()', () => {
   });
   it('catches write error', async () => {
     const execSnapshots = mockExecAll(exec);
-    platform.getFile.mockResolvedValueOnce('Current Podfile');
+    fs.readFile.mockResolvedValueOnce('Current Podfile' as any);
     fs.outputFile.mockImplementationOnce(() => {
       throw new Error('not found');
     });
@@ -148,7 +171,7 @@ describe('.updateArtifacts()', () => {
   });
   it('returns pod exec error', async () => {
     const execSnapshots = mockExecAll(exec, new Error('exec exception'));
-    platform.getFile.mockResolvedValueOnce('Old Podfile.lock');
+    fs.readFile.mockResolvedValueOnce('Old Podfile.lock' as any);
     fs.outputFile.mockResolvedValueOnce(null as never);
     fs.readFile.mockResolvedValueOnce('Old Podfile.lock' as any);
     expect(
@@ -164,19 +187,19 @@ describe('.updateArtifacts()', () => {
   it('dynamically selects Docker image tag', async () => {
     const execSnapshots = mockExecAll(exec);
 
-    setExecConfig({
+    await setExecConfig({
       ...config,
       binarySource: 'docker',
       dockerUser: 'ubuntu',
     });
 
-    platform.getFile.mockResolvedValueOnce('COCOAPODS: 1.2.4');
+    fs.readFile.mockResolvedValueOnce('COCOAPODS: 1.2.4' as any);
 
     fs.readFile.mockResolvedValueOnce('New Podfile' as any);
 
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['Podfile.lock'],
-    } as Git.StatusResult);
+    } as StatusResult);
 
     await updateArtifacts({
       packageFileName: 'Podfile',
@@ -189,22 +212,22 @@ describe('.updateArtifacts()', () => {
   it('falls back to the `latest` Docker image tag', async () => {
     const execSnapshots = mockExecAll(exec);
 
-    setExecConfig({
+    await setExecConfig({
       ...config,
       binarySource: 'docker',
       dockerUser: 'ubuntu',
     });
 
-    platform.getFile.mockResolvedValueOnce('COCOAPODS: 1.2.4');
+    fs.readFile.mockResolvedValueOnce('COCOAPODS: 1.2.4' as any);
     datasource.getPkgReleases.mockResolvedValueOnce({
       releases: [],
     });
 
     fs.readFile.mockResolvedValueOnce('New Podfile' as any);
 
-    platform.getRepoStatus.mockResolvedValueOnce({
+    git.getRepoStatus.mockResolvedValueOnce({
       modified: ['Podfile.lock'],
-    } as Git.StatusResult);
+    } as StatusResult);
 
     await updateArtifacts({
       packageFileName: 'Podfile',

@@ -81,7 +81,7 @@ describe('lib/manager/dockerfile/extract', () => {
       ).deps;
       expect(res).toMatchSnapshot();
     });
-    it('handles abnoral spacing', () => {
+    it('handles abnormal spacing', () => {
       const res = extractPackageFile(
         'FROM    registry.allmine.info:5005/node:8.7.0\n\n'
       ).deps;
@@ -94,7 +94,7 @@ describe('lib/manager/dockerfile/extract', () => {
       expect(res).toMatchSnapshot();
       expect(res).toHaveLength(2);
     });
-    it('skips scratchs', () => {
+    it('skips scratches', () => {
       const res = extractPackageFile('FROM scratch\nADD foo\n');
       expect(res).toBeNull();
     });
@@ -134,8 +134,6 @@ describe('lib/manager/dockerfile/extract', () => {
         res[2].depType === 'final',
         res[1].depType === 'stage',
         res[0].depType === 'stage',
-        res[2].managerData.lineNumber > res[1].managerData.lineNumber,
-        res[2].managerData.lineNumber > res[0].managerData.lineNumber,
       ].every(Boolean);
       expect(passed).toBe(true);
     });

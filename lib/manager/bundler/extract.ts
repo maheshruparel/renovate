@@ -1,10 +1,10 @@
-import { logger } from '../../logger';
-import { PackageFile, PackageDependency } from '../common';
-import { platform } from '../../platform';
-import { regEx } from '../../util/regex';
-import { extractLockFileEntries } from './locked-version';
 import * as datasourceRubygems from '../../datasource/rubygems';
+import { logger } from '../../logger';
 import { SkipReason } from '../../types';
+import { readLocalFile } from '../../util/fs';
+import { regEx } from '../../util/regex';
+import { PackageDependency, PackageFile } from '../common';
+import { extractLockFileEntries } from './locked-version';
 
 export async function extractPackageFile(
   content: string,
@@ -36,27 +36,20 @@ export async function extractPackageFile(
         regEx(`^ruby ${delimiter}([^${delimiter}]+)${delimiter}`).exec(line);
     }
     if (rubyMatch) {
-      res.compatibility = { ruby: rubyMatch[1] };
+      res.constraints = { ruby: rubyMatch[1] };
     }
-    let gemMatch: RegExpMatchArray;
-    let gemDelimiter: string;
-    for (const delimiter of delimiters) {
-      const gemMatchRegex = `^gem ${delimiter}([^${delimiter}]+)${delimiter}(,\\s+${delimiter}([^${delimiter}]+)${delimiter}){0,2}`;
-      if (regEx(gemMatchRegex).test(line)) {
-        gemDelimiter = delimiter;
-        gemMatch = gemMatch || regEx(gemMatchRegex).exec(line);
-      }
-    }
+    const gemMatchRegex = /^\s*gem\s+(['"])(?<depName>[^'"]+)\1(\s*,\s*(?<currentValue>(['"])[^'"]+\5(\s*,\s*\5[^'"]+\5)?))?/;
+    const gemMatch = gemMatchRegex.exec(line);
     if (gemMatch) {
       const dep: PackageDependency = {
-        depName: gemMatch[1],
+        depName: gemMatch.groups.depName,
         managerData: { lineNumber },
       };
-      if (gemMatch[3]) {
-        dep.currentValue = gemMatch[0]
-          .substring(`gem ${gemDelimiter}${dep.depName}${gemDelimiter},`.length)
-          .replace(regEx(gemDelimiter, 'g'), '')
-          .trim();
+      if (gemMatch.groups.currentValue) {
+        const currentValue = gemMatch.groups.currentValue;
+        dep.currentValue = /\s*,\s*/.test(currentValue)
+          ? currentValue
+          : currentValue.slice(1, -1);
       } else {
         dep.skipReason = SkipReason.NoVersion;
       }
@@ -69,8 +62,8 @@ export async function extractPackageFile(
     if (groupMatch) {
       const depTypes = groupMatch[1]
         .split(',')
-        .map(group => group.trim())
-        .map(group => group.replace(/^:/, ''));
+        .map((group) => group.trim())
+        .map((group) => group.replace(/^:/, ''));
       const groupLineNumber = lineNumber;
       let groupContent = '';
       let groupLine = '';
@@ -84,11 +77,12 @@ export async function extractPackageFile(
       const groupRes = await extractPackageFile(groupContent);
       if (groupRes) {
         res.deps = res.deps.concat(
-          groupRes.deps.map(dep => ({
+          groupRes.deps.map((dep) => ({
             ...dep,
             depTypes,
             managerData: {
-              lineNumber: dep.managerData.lineNumber + groupLineNumber + 1,
+              lineNumber:
+                Number(dep.managerData.lineNumber) + groupLineNumber + 1,
             },
           }))
         );
@@ -108,7 +102,7 @@ export async function extractPackageFile(
           sourceLine = lines[lineNumber];
           // istanbul ignore if
           if (sourceLine === null || sourceLine === undefined) {
-            logger.error({ content, fileName }, 'Undefined sourceLine');
+            logger.info({ content, fileName }, 'Undefined sourceLine');
             sourceLine = 'end';
           }
           if (sourceLine !== 'end') {
@@ -118,11 +112,12 @@ export async function extractPackageFile(
         const sourceRes = await extractPackageFile(sourceContent);
         if (sourceRes) {
           res.deps = res.deps.concat(
-            sourceRes.deps.map(dep => ({
+            sourceRes.deps.map((dep) => ({
               ...dep,
               registryUrls: [repositoryUrl],
               managerData: {
-                lineNumber: dep.managerData.lineNumber + sourceLineNumber + 1,
+                lineNumber:
+                  Number(dep.managerData.lineNumber) + sourceLineNumber + 1,
               },
             }))
           );
@@ -145,10 +140,11 @@ export async function extractPackageFile(
       if (platformsRes) {
         res.deps = res.deps.concat(
           // eslint-disable-next-line no-loop-func
-          platformsRes.deps.map(dep => ({
+          platformsRes.deps.map((dep) => ({
             ...dep,
             managerData: {
-              lineNumber: dep.managerData.lineNumber + platformsLineNumber + 1,
+              lineNumber:
+                Number(dep.managerData.lineNumber) + platformsLineNumber + 1,
             },
           }))
         );
@@ -170,10 +166,10 @@ export async function extractPackageFile(
       if (ifRes) {
         res.deps = res.deps.concat(
           // eslint-disable-next-line no-loop-func
-          ifRes.deps.map(dep => ({
+          ifRes.deps.map((dep) => ({
             ...dep,
             managerData: {
-              lineNumber: dep.managerData.lineNumber + ifLineNumber + 1,
+              lineNumber: Number(dep.managerData.lineNumber) + ifLineNumber + 1,
             },
           }))
         );
@@ -186,7 +182,7 @@ export async function extractPackageFile(
 
   if (fileName) {
     const gemfileLock = fileName + '.lock';
-    const lockContent = await platform.getFile(gemfileLock);
+    const lockContent = await readLocalFile(gemfileLock, 'utf8');
     if (lockContent) {
       logger.debug({ packageFile: fileName }, 'Found Gemfile.lock file');
       const lockedEntries = extractLockFileEntries(lockContent);
@@ -198,8 +194,8 @@ export async function extractPackageFile(
       }
       const bundledWith = /\nBUNDLED WITH\n\s+(.*?)(\n|$)/.exec(lockContent);
       if (bundledWith) {
-        res.compatibility = res.compatibility || {};
-        res.compatibility.bundler = bundledWith[1];
+        res.constraints = res.constraints || {};
+        res.constraints.bundler = bundledWith[1];
       }
     }
   }

@@ -1,5 +1,5 @@
+import { NewValueConfig, VersioningApi } from '../common';
 import { api as npm } from '../npm';
-import { VersioningApi, NewValueConfig } from '../common';
 
 export const id = 'hashicorp';
 export const displayName = 'Hashicorp';
@@ -60,6 +60,7 @@ export const api: VersioningApi = {
   getNewValue,
 };
 
+// eslint-disable-next-line @typescript-eslint/unbound-method
 export const { isVersion } = api;
 
 export default api;

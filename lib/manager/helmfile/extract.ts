@@ -1,9 +1,9 @@
 import is from '@sindresorhus/is';
 import yaml from 'js-yaml';
-import { SkipReason } from '../../types';
-import { logger } from '../../logger';
-import { PackageFile, PackageDependency, ExtractConfig } from '../common';
 import * as datasourceHelm from '../../datasource/helm';
+import { logger } from '../../logger';
+import { SkipReason } from '../../types';
+import { ExtractConfig, PackageDependency, PackageFile } from '../common';
 
 const isValidChartName = (name: string): boolean => {
   return !/[!@#$%^&*(),.?":{}/|<>A-Z]/.test(name);
@@ -35,7 +35,7 @@ export function extractPackageFile(
   }
   logger.debug({ aliases }, 'repositories discovered.');
 
-  deps = doc.releases.map(dep => {
+  deps = doc.releases.map((dep) => {
     let depName = dep.chart;
     let repoName = null;
 
@@ -68,7 +68,7 @@ export function extractPackageFile(
       res.skipReason = SkipReason.LocalChart;
     }
 
-    // By definition on helm the chart name should be lowecase letter + number + -
+    // By definition on helm the chart name should be lowercase letter + number + -
     // However helmfile support templating of that field
     if (!isValidChartName(res.depName)) {
       res.skipReason = SkipReason.UnsupportedChartType;

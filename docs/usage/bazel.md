@@ -5,7 +5,7 @@ description: Bazel dependencies support in Renovate
 
 # Bazel
 
-Renovate supports upgrading dependencies in bazel `WORKSPACE` files.
+Renovate supports upgrading dependencies in Bazel `WORKSPACE` files.
 
 ## How It Works
 
@@ -34,9 +34,9 @@ git_repository(
 
 New versions will be detected using the list of **tags** for that repository on GitHub.
 
-## http_archive
+## http_archive and http_file
 
-Renovate will update any `http_archive` declaration that contains the following:
+Renovate will update any `http_archive` or `http_file` declaration that contains the following:
 
 1.  name
 2.  url matching `https://github.com/<owner>/<repo>/releases/download/<semver>/<repo>.tar.gz`

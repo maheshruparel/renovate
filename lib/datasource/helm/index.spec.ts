@@ -1,8 +1,7 @@
 import fs from 'fs';
-import _got from '../../util/got';
-import { getPkgReleases, getRepositoryData } from '.';
-
-const got: any = _got;
+import { getPkgReleases } from '..';
+import * as httpMock from '../../../test/httpMock';
+import { id as datasource } from '.';
 
 // Truncated index.yaml file
 const indexYaml = fs.readFileSync(
@@ -10,101 +9,122 @@ const indexYaml = fs.readFileSync(
   'utf8'
 );
 
-jest.mock('../../util/got');
-
 describe('datasource/helm', () => {
-  describe('getPkgReleases', () => {
+  describe('getReleases', () => {
     beforeEach(() => {
       jest.resetAllMocks();
-      global.repoCache = {};
-      return global.renovateCache.rmAll();
+      httpMock.setup();
     });
+
+    afterEach(() => {
+      httpMock.reset();
+    });
+
     it('returns null if lookupName was not provided', async () => {
       expect(
         await getPkgReleases({
-          lookupName: undefined,
-          registryUrls: ['example-repository.com'],
+          datasource,
+          depName: undefined,
+          registryUrls: ['https://example-repository.com'],
         })
       ).toBeNull();
     });
     it('returns null if repository was not provided', async () => {
       expect(
         await getPkgReleases({
-          lookupName: 'some_chart',
+          datasource,
+          depName: 'some_chart',
           registryUrls: [],
         })
       ).toBeNull();
     });
     it('returns null for empty response', async () => {
-      got.mockReturnValueOnce(null);
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(200, null);
       expect(
         await getPkgReleases({
-          lookupName: 'non_existent_chart',
-          registryUrls: ['example-repository.com'],
+          datasource,
+          depName: 'non_existent_chart',
+          registryUrls: ['https://example-repository.com'],
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for missing response body', async () => {
-      got.mockReturnValueOnce({
-        body: undefined,
-      });
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(200, undefined);
       expect(
         await getPkgReleases({
-          lookupName: 'non_existent_chart',
-          registryUrls: ['example-repository.com'],
+          datasource,
+          depName: 'non_existent_chart',
+          registryUrls: ['https://example-repository.com'],
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for 404', async () => {
-      got.mockImplementationOnce(() =>
-        Promise.reject({
-          statusCode: 404,
-        })
-      );
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(404);
       expect(
         await getPkgReleases({
-          lookupName: 'some_chart',
-          registryUrls: ['example-repository.com'],
+          datasource,
+          depName: 'some_chart',
+          registryUrls: ['https://example-repository.com'],
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('throws for 5xx', async () => {
-      got.mockImplementationOnce(() =>
-        Promise.reject({
-          statusCode: 502,
-        })
-      );
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(502);
       let e;
       try {
         await getPkgReleases({
-          lookupName: 'some_chart',
-          registryUrls: ['example-repository.com'],
+          datasource,
+          depName: 'some_chart',
+          registryUrls: ['https://example-repository.com'],
         });
       } catch (err) {
         e = err;
       }
       expect(e).toBeDefined();
       expect(e).toMatchSnapshot();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for unknown error', async () => {
-      got.mockImplementationOnce(() => {
-        throw new Error();
-      });
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .replyWithError('');
       expect(
         await getPkgReleases({
-          lookupName: 'some_chart',
-          registryUrls: ['example-repository.com'],
+          datasource,
+          depName: 'some_chart',
+          registryUrls: ['https://example-repository.com'],
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null if index.yaml in response is empty', async () => {
-      const res = { body: '# A comment' };
-      got.mockReturnValueOnce(res);
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(200, '# A comment');
       const releases = await getPkgReleases({
-        lookupName: 'non_existent_chart',
-        registryUrls: ['example-repository.com'],
+        datasource,
+        depName: 'non_existent_chart',
+        registryUrls: ['https://example-repository.com'],
       });
       expect(releases).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null if index.yaml in response is invalid', async () => {
       const res = {
@@ -113,49 +133,60 @@ describe('datasource/helm', () => {
                      [
                      yaml`,
       };
-      got.mockReturnValueOnce(res);
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(200, res);
       const releases = await getPkgReleases({
-        lookupName: 'non_existent_chart',
-        registryUrls: ['example-repository.com'],
+        datasource,
+        depName: 'non_existent_chart',
+        registryUrls: ['https://example-repository.com'],
       });
       expect(releases).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null if lookupName is not in index.yaml', async () => {
-      got.mockReturnValueOnce({ body: indexYaml });
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(200, indexYaml);
       const releases = await getPkgReleases({
-        lookupName: 'non_existent_chart',
-        registryUrls: ['example-repository.com'],
+        datasource,
+        depName: 'non_existent_chart',
+        registryUrls: ['https://example-repository.com'],
       });
       expect(releases).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
-    it('returns list of versions for normal response if index.yaml is not cached', async () => {
-      got.mockReturnValueOnce({ body: indexYaml });
+    it('returns list of versions for normal response', async () => {
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/index.yaml')
+        .reply(200, indexYaml);
       const releases = await getPkgReleases({
-        lookupName: 'ambassador',
-        registryUrls: ['example-repository.com'],
+        datasource,
+        depName: 'ambassador',
+        registryUrls: ['https://example-repository.com'],
       });
       expect(releases).not.toBeNull();
       expect(releases).toMatchSnapshot();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
-    it('returns list of versions for normal response if index.yaml is cached', async () => {
-      const repository = 'example-repository.com';
-      const cacheNamespace = 'datasource-helm';
-      const cacheKey = repository;
-      const cacheMinutes = 10;
-      got.mockReturnValueOnce({ body: indexYaml });
-      const repositoryData = await getRepositoryData(repository);
-      await global.renovateCache.set(
-        cacheNamespace,
-        cacheKey,
-        repositoryData,
-        cacheMinutes
+    it('adds trailing slash to subdirectories', async () => {
+      httpMock
+        .scope('https://example-repository.com')
+        .get('/subdir/index.yaml')
+        .reply(200, indexYaml);
+      await getPkgReleases({
+        datasource,
+        depName: 'ambassador',
+        registryUrls: ['https://example-repository.com/subdir'],
+      });
+      const trace = httpMock.getTrace();
+      expect(trace[0].url).toEqual(
+        'https://example-repository.com/subdir/index.yaml'
       );
-      const releases = await getPkgReleases({
-        lookupName: 'ambassador',
-        registryUrls: [repository],
-      });
-      expect(releases).not.toBeNull();
-      expect(releases).toMatchSnapshot();
+      expect(trace).toMatchSnapshot();
     });
   });
 });

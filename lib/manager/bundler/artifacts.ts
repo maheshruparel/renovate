@@ -1,24 +1,33 @@
+import { quote } from 'shlex';
+import { BUNDLER_INVALID_CREDENTIALS } from '../../constants/error-messages';
+import { logger } from '../../logger';
+import { HostRule } from '../../types';
+import * as memCache from '../../util/cache/memory';
+import { ExecOptions, exec } from '../../util/exec';
 import {
+  deleteLocalFile,
   getSiblingFileName,
   readLocalFile,
   writeLocalFile,
 } from '../../util/fs';
-import { exec, ExecOptions } from '../../util/exec';
-import { logger } from '../../logger';
+import { getRepoStatus } from '../../util/git';
 import { isValid } from '../../versioning/ruby';
 import { UpdateArtifact, UpdateArtifactsResult } from '../common';
-import { platform } from '../../platform';
 import {
-  BUNDLER_INVALID_CREDENTIALS,
-  BUNDLER_UNKNOWN_ERROR,
-} from '../../constants/error-messages';
+  findAllAuthenticatable,
+  getAuthenticationHeaderValue,
+  getDomain,
+} from './host-rules';
+import { getGemHome } from './utils';
+
+const hostConfigVariablePrefix = 'BUNDLE_';
 
 async function getRubyConstraint(
   updateArtifact: UpdateArtifact
 ): Promise<string> {
   const { packageFileName, config } = updateArtifact;
-  const { compatibility = {} } = config;
-  const { ruby } = compatibility;
+  const { constraints = {} } = config;
+  const { ruby } = constraints;
 
   let rubyConstraint: string;
   if (ruby) {
@@ -29,7 +38,7 @@ async function getRubyConstraint(
       packageFileName,
       '.ruby-version'
     );
-    const rubyVersionFileContent = await platform.getFile(rubyVersionFile);
+    const rubyVersionFileContent = await readLocalFile(rubyVersionFile, 'utf8');
     if (rubyVersionFileContent) {
       logger.debug('Using ruby version specified in .ruby-version');
       rubyConstraint = rubyVersionFileContent
@@ -41,6 +50,19 @@ async function getRubyConstraint(
   return rubyConstraint;
 }
 
+function buildBundleHostVariable(hostRule: HostRule): Record<string, string> {
+  const varName =
+    hostConfigVariablePrefix +
+    getDomain(hostRule)
+      .split('.')
+      .map((term) => term.toUpperCase())
+      .join('__');
+
+  return {
+    [varName]: `${getAuthenticationHeaderValue(hostRule)}`,
+  };
+}
+
 export async function updateArtifacts(
   updateArtifact: UpdateArtifact
 ): Promise<UpdateArtifactsResult[] | null> {
@@ -50,31 +72,42 @@ export async function updateArtifacts(
     newPackageFileContent,
     config,
   } = updateArtifact;
-  const { compatibility = {} } = config;
-
+  const { constraints = {} } = config;
   logger.debug(`bundler.updateArtifacts(${packageFileName})`);
+  const existingError = memCache.get<string>('bundlerArtifactsError');
   // istanbul ignore if
-  if (global.repoCache.bundlerArtifactsError) {
+  if (existingError) {
     logger.debug('Aborting Bundler artifacts due to previous failed attempt');
-    throw new Error(global.repoCache.bundlerArtifactsError);
+    throw new Error(existingError);
   }
   const lockFileName = `${packageFileName}.lock`;
-  const existingLockFileContent = await platform.getFile(lockFileName);
+  const existingLockFileContent = await readLocalFile(lockFileName, 'utf8');
   if (!existingLockFileContent) {
     logger.debug('No Gemfile.lock found');
     return null;
   }
+
+  if (config.isLockFileMaintenance) {
+    await deleteLocalFile(lockFileName);
+  }
+
   try {
     await writeLocalFile(packageFileName, newPackageFileContent);
 
-    const cmd = `bundle lock --update ${updatedDeps.join(' ')}`;
+    let cmd;
+
+    if (config.isLockFileMaintenance) {
+      cmd = 'bundle lock';
+    } else {
+      cmd = `bundle lock --update ${updatedDeps.map(quote).join(' ')}`;
+    }
 
     let bundlerVersion = '';
-    const { bundler } = compatibility;
+    const { bundler } = constraints;
     if (bundler) {
       if (isValid(bundler)) {
         logger.debug({ bundlerVersion: bundler }, 'Found bundler version');
-        bundlerVersion = ` -v ${bundler}`;
+        bundlerVersion = ` -v ${quote(bundler)}`;
       } else {
         logger.warn({ bundlerVersion: bundler }, 'Invalid bundler version');
       }
@@ -83,10 +116,21 @@ export async function updateArtifacts(
     }
     const preCommands = [
       'ruby --version',
-      `gem install bundler${bundlerVersion} --no-document`,
+      `gem install bundler${bundlerVersion}`,
     ];
+
+    const bundlerHostRulesVariables = findAllAuthenticatable({
+      hostType: 'bundler',
+    }).reduce((variables, hostRule) => {
+      return { ...variables, ...buildBundleHostVariable(hostRule) };
+    }, {} as Record<string, string>);
+
     const execOptions: ExecOptions = {
       cwdFile: packageFileName,
+      extraEnv: {
+        ...bundlerHostRulesVariables,
+        GEM_HOME: await getGemHome(config),
+      },
       docker: {
         image: 'renovate/ruby',
         tagScheme: 'ruby',
@@ -95,7 +139,7 @@ export async function updateArtifacts(
       },
     };
     await exec(cmd, execOptions);
-    const status = await platform.getRepoStatus();
+    const status = await getRepoStatus();
     if (!status.modified.includes(lockFileName)) {
       return null;
     }
@@ -110,7 +154,7 @@ export async function updateArtifacts(
       },
     ];
   } catch (err) /* istanbul ignore next */ {
-    const output = err.stdout + err.stderr;
+    const output = `${String(err.stdout)}\n${String(err.stderr)}`;
     if (
       err.message.includes('fatal: Could not parse object') ||
       output.includes('but that version could not be found')
@@ -125,24 +169,22 @@ export async function updateArtifacts(
       ];
     }
     if (
-      (err.stdout &&
-        err.stdout.includes('Please supply credentials for this source')) ||
-      (err.stderr && err.stderr.includes('Authentication is required')) ||
-      (err.stderr &&
-        err.stderr.includes(
-          'Please make sure you have the correct access rights'
-        ))
+      err.stdout?.includes('Please supply credentials for this source') ||
+      err.stderr?.includes('Authentication is required') ||
+      err.stderr?.includes(
+        'Please make sure you have the correct access rights'
+      )
     ) {
       logger.debug(
         { err },
         'Gemfile.lock update failed due to missing credentials - skipping branch'
       );
       // Do not generate these PRs because we don't yet support Bundler authentication
-      global.repoCache.bundlerArtifactsError = BUNDLER_INVALID_CREDENTIALS;
+      memCache.set('bundlerArtifactsError', BUNDLER_INVALID_CREDENTIALS);
       throw new Error(BUNDLER_INVALID_CREDENTIALS);
     }
     const resolveMatchRe = new RegExp('\\s+(.*) was resolved to', 'g');
-    if (output.match(resolveMatchRe)) {
+    if (output.match(resolveMatchRe) && !config.isLockFileMaintenance) {
       logger.debug({ err }, 'Bundler has a resolve error');
       const resolveMatches = [];
       let resolveMatch;
@@ -152,7 +194,7 @@ export async function updateArtifacts(
           resolveMatches.push(resolveMatch[1].split(' ').shift());
         }
       } while (resolveMatch);
-      if (resolveMatches.some(match => !updatedDeps.includes(match))) {
+      if (resolveMatches.some((match) => !updatedDeps.includes(match))) {
         logger.debug(
           { resolveMatches, updatedDeps },
           'Found new resolve matches - reattempting recursively'
@@ -171,20 +213,19 @@ export async function updateArtifacts(
         { err },
         'Gemfile.lock update failed due to incompatible packages'
       );
-      return [
-        {
-          artifactError: {
-            lockFile: lockFileName,
-            stderr: err.stdout + '\n' + err.stderr,
-          },
-        },
-      ];
+    } else {
+      logger.info(
+        { err },
+        'Gemfile.lock update failed due to an unknown reason'
+      );
     }
-    logger.warn(
-      { err },
-      'Gemfile.lock update failed due to unknown reason - skipping branch'
-    );
-    global.repoCache.bundlerArtifactsError = BUNDLER_UNKNOWN_ERROR;
-    throw new Error(BUNDLER_UNKNOWN_ERROR);
+    return [
+      {
+        artifactError: {
+          lockFile: lockFileName,
+          stderr: `${String(err.stdout)}\n${String(err.stderr)}`,
+        },
+      },
+    ];
   }
 }

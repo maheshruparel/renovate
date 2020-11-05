@@ -1,5 +1,5 @@
-import { PackageFile, PackageDependency } from '../common';
 import * as datasourceCdnjs from '../../datasource/cdnjs';
+import { PackageDependency, PackageFile } from '../common';
 
 export const cloudflareUrlRegex = /\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/(?<depName>[^/]+?)\/(?<currentValue>[^/]+?)\/(?<asset>[-/_.a-zA-Z0-9]+)/;
 
@@ -12,10 +12,6 @@ export function extractPackageFile(content: string): PackageFile {
   while (match) {
     const [wholeSubstr] = match;
     const { depName, currentValue, asset } = match.groups;
-
-    const fileReplacePosition =
-      offset + match.index + wholeSubstr.indexOf(currentValue);
-
     offset += match.index + wholeSubstr.length;
     rest = content.slice(offset);
     match = cloudflareUrlRegex.exec(rest);
@@ -25,9 +21,6 @@ export function extractPackageFile(content: string): PackageFile {
       depName,
       lookupName: `${depName}/${asset}`,
       currentValue,
-      managerData: {
-        fileReplacePosition,
-      },
     });
   }
 

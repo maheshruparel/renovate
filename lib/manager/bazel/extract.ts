@@ -1,14 +1,14 @@
 /* eslint no-plusplus: 0  */
-import parse from 'github-url-from-git';
 import { parse as _parse } from 'url';
+import parse from 'github-url-from-git';
+import * as datasourceDocker from '../../datasource/docker';
+import * as datasourceGithubReleases from '../../datasource/github-releases';
+import * as datasourceGo from '../../datasource/go';
 import { logger } from '../../logger';
-import { PackageDependency, PackageFile } from '../common';
+import { SkipReason } from '../../types';
 import { regEx } from '../../util/regex';
 import * as dockerVersioning from '../../versioning/docker';
-import * as datasourceDocker from '../../datasource/docker';
-import * as datasourceGo from '../../datasource/go';
-import * as datasourceGithubReleases from '../../datasource/github-releases';
-import { SkipReason } from '../../types';
+import { PackageDependency, PackageFile } from '../common';
 
 interface UrlParsedResult {
   repo: string;
@@ -49,7 +49,7 @@ function findBalancedParenIndex(longString: string): number {
    * if one opening parenthesis -> 1
    * if two opening parenthesis -> 2
    * if two opening and one closing parenthesis -> 1
-   * if ["""] finded then ignore all [)] until closing ["""] parsed.
+   * if ["""] found then ignore all [)] until closing ["""] parsed.
    * https://github.com/renovatebot/renovate/pull/3459#issuecomment-478249702
    */
   let intShouldNotBeOdd = 0; // openClosePythonMultiLineComment
@@ -63,7 +63,7 @@ function findBalancedParenIndex(longString: string): number {
         parenNestingDepth--;
         break;
       case '"':
-        if (i > 1 && arr.slice(i - 2, i).every(prev => char === prev)) {
+        if (i > 1 && arr.slice(i - 2, i).every((prev) => char === prev)) {
           intShouldNotBeOdd++;
         }
         break;
@@ -79,6 +79,7 @@ function parseContent(content: string): string[] {
   return [
     'container_pull',
     'http_archive',
+    'http_file',
     'go_repository',
     'git_repository',
   ].reduce(
@@ -87,7 +88,7 @@ function parseContent(content: string): string[] {
       ...content
         .split(regEx(prefix + '\\s*\\(', 'g'))
         .slice(1)
-        .map(base => {
+        .map((base) => {
           const ind = findBalancedParenIndex(base);
 
           return ind >= 0 && `${prefix}(${base.slice(0, ind)})`;
@@ -98,15 +99,18 @@ function parseContent(content: string): string[] {
   );
 }
 
-export function extractPackageFile(content: string): PackageFile | null {
+export function extractPackageFile(
+  content: string,
+  fileName?: string
+): PackageFile | null {
   const definitions = parseContent(content);
   if (!definitions.length) {
-    logger.debug('No matching WORKSPACE definitions found');
+    logger.debug({ fileName }, 'No matching bazel WORKSPACE definitions found');
     return null;
   }
   logger.debug({ definitions }, `Found ${definitions.length} definitions`);
   const deps: PackageDependency[] = [];
-  definitions.forEach(def => {
+  definitions.forEach((def) => {
     logger.debug({ def }, 'Checking bazel definition');
     const [depType] = def.split('(', 1);
     const dep: PackageDependency = { depType, managerData: { def } };
@@ -215,7 +219,7 @@ export function extractPackageFile(content: string): PackageFile | null {
       }
       deps.push(dep);
     } else if (
-      depType === 'http_archive' &&
+      (depType === 'http_archive' || depType === 'http_file') &&
       depName &&
       parseUrl(url) &&
       sha256
@@ -244,6 +248,7 @@ export function extractPackageFile(content: string): PackageFile | null {
       dep.versioning = dockerVersioning.id;
       dep.datasource = datasourceDocker.id;
       dep.lookupName = repository;
+      dep.registryUrls = [registry];
       deps.push(dep);
     } else {
       logger.debug(

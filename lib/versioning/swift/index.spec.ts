@@ -1,9 +1,10 @@
-import swift from '.';
 import { RangeStrategy } from '..';
+import swift from '.';
 
 const {
   getNewValue,
   isValid,
+  isVersion,
   minSatisfyingVersion,
   maxSatisfyingVersion,
   isLessThanRange,
@@ -11,6 +12,10 @@ const {
 } = swift;
 
 describe('isValid(input)', () => {
+  it('supports isVersion', () => {
+    expect(isVersion('from: "1.2.3"')).toBe(false);
+    expect(isVersion('1.2.3')).toBe(true);
+  });
   it('understands Swift version ranges', () => {
     expect(isValid('from: "1.2.3"')).toBe(true);
     expect(isValid('from : "1.2.3"')).toBe(true);
@@ -87,7 +92,8 @@ describe('getNewValue()', () => {
     [
       ['1.2.3', 'auto', '1.2.3', '1.2.4', '1.2.3'],
       ['v1.2.3', 'auto', 'v1.2.3', 'v1.2.4', 'v1.2.3'],
-      ['from: "1.2.3"', 'auto', '1.2.3', '1.2.4', '1.2.4'],
+      ['from: "1.2.3"', 'auto', '1.2.3', '1.2.4', 'from: "1.2.4"'],
+      ['from: "1.2.2"', 'auto', '1.2.3', '1.2.4', 'from: "1.2.4"'],
       ['"1.2.3"...', 'auto', '1.2.3', '1.2.4', '"1.2.4"...'],
       ['"1.2.3"..."1.2.4"', 'auto', '1.2.3', '1.2.5', '"1.2.3"..."1.2.5"'],
       ['"1.2.3"..<"1.2.4"', 'auto', '1.2.3', '1.2.5', '"1.2.3"..<"1.2.5"'],

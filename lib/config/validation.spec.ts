@@ -11,12 +11,37 @@ describe('config/validation', () => {
       expect(warnings).toHaveLength(1);
       expect(warnings).toMatchSnapshot();
     });
-    it('catches invalid handlebars templates', async () => {
+    it('catches invalid templates', async () => {
       const config = {
         commitMessage: '{{{something}}',
       };
       const { errors } = await configValidation.validateConfig(config);
       expect(errors).toHaveLength(1);
+      expect(errors).toMatchSnapshot();
+    });
+    it('catches invalid allowedVersions regex', async () => {
+      const config = {
+        packageRules: [
+          {
+            packageNames: ['foo'],
+            allowedVersions: '/^2/',
+          },
+          {
+            packageNames: ['bar'],
+            allowedVersions: '/***$}{]][/',
+          },
+          {
+            packageNames: ['baz'],
+            allowedVersions: '!/^2/',
+          },
+          {
+            packageNames: ['quack'],
+            allowedVersions: '!/***$}{]][/',
+          },
+        ],
+      };
+      const { errors } = await configValidation.validateConfig(config);
+      expect(errors).toHaveLength(2);
       expect(errors).toMatchSnapshot();
     });
     it('returns nested errors', async () => {
@@ -55,7 +80,7 @@ describe('config/validation', () => {
       );
       expect(warnings).toHaveLength(0);
       expect(errors).toHaveLength(1);
-      expect(errors[0].message.includes('ansible')).toBe(true);
+      expect(errors[0].message).toContain('ansible');
     });
     it('included managers of the wrong type', async () => {
       const config = {
@@ -153,7 +178,7 @@ describe('config/validation', () => {
         npm: {
           fileMatch: ['abc ([a-z]+) ([a-z]+))'],
         },
-        docker: {
+        dockerfile: {
           fileMatch: ['x?+'],
         },
       };
@@ -167,7 +192,14 @@ describe('config/validation', () => {
 
     it('validates regEx for each fileMatch', async () => {
       const config = {
-        fileMatch: ['js', '***$}{]]['],
+        regexManagers: [
+          {
+            fileMatch: ['js', '***$}{]]['],
+            matchStrings: ['^(?<depName>foo)(?<currentValue>bar)$'],
+            datasourceTemplate: 'maven',
+            versioningTemplate: 'gradle',
+          },
+        ],
       };
       const { warnings, errors } = await configValidation.validateConfig(
         config,
@@ -175,11 +207,13 @@ describe('config/validation', () => {
       );
       expect(warnings).toHaveLength(0);
       expect(errors).toHaveLength(1);
+      expect(errors).toMatchSnapshot();
     });
     it('errors if no regexManager matchStrings', async () => {
       const config = {
         regexManagers: [
           {
+            fileMatch: [],
             matchStrings: [],
           },
         ],
@@ -191,10 +225,28 @@ describe('config/validation', () => {
       expect(warnings).toHaveLength(0);
       expect(errors).toHaveLength(1);
     });
+    it('errors if no regexManager fileMatch', async () => {
+      const config = {
+        regexManagers: [
+          {
+            matchStrings: ['^(?<depName>foo)(?<currentValue>bar)$'],
+            datasourceTemplate: 'maven',
+            versioningTemplate: 'gradle',
+          },
+        ],
+      };
+      const { warnings, errors } = await configValidation.validateConfig(
+        config as any,
+        true
+      );
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+    });
     it('validates regEx for each matchStrings', async () => {
       const config = {
         regexManagers: [
           {
+            fileMatch: ['Dockerfile'],
             matchStrings: ['***$}{]]['],
           },
         ],
@@ -210,6 +262,7 @@ describe('config/validation', () => {
       const config = {
         regexManagers: [
           {
+            fileMatch: ['Dockerfile'],
             matchStrings: ['ENV (?<currentValue>.*?)\\s'],
             depNameTemplate: 'foo',
             datasourceTemplate: 'bar',
@@ -227,6 +280,7 @@ describe('config/validation', () => {
       const config = {
         regexManagers: [
           {
+            fileMatch: ['Dockerfile'],
             matchStrings: ['ENV (?<currentValue>.*?)\\s'],
             depNameTemplate: 'foo',
             datasourceTemplate: 'bar',
@@ -245,6 +299,7 @@ describe('config/validation', () => {
       const config = {
         regexManagers: [
           {
+            fileMatch: ['Dockerfile'],
             matchStrings: ['ENV (.*?)\\s'],
             depNameTemplate: 'foo',
             datasourceTemplate: 'bar',
@@ -283,9 +338,9 @@ describe('config/validation', () => {
       expect(errors).toHaveLength(0);
     });
 
-    it('does not validate compatibility children', async () => {
+    it('does not validate constraints children', async () => {
       const config = {
-        compatibility: { packageRules: [{}] },
+        constraints: { packageRules: [{}] },
       };
       const { warnings, errors } = await configValidation.validateConfig(
         config,
@@ -305,6 +360,91 @@ describe('config/validation', () => {
       );
       expect(warnings).toHaveLength(0);
       expect(errors).toHaveLength(0);
+    });
+
+    it('validates valid alias objects', async () => {
+      const config = {
+        aliases: {
+          example1: 'http://www.example.com',
+          example2: 'https://www.example2.com/example',
+        },
+      };
+      const { warnings, errors } = await configValidation.validateConfig(
+        config
+      );
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(0);
+      expect(errors).toMatchSnapshot();
+    });
+
+    it('errors if aliases depth is more than 1', async () => {
+      const config = {
+        aliases: {
+          sample: {
+            example1: 'http://www.example.com',
+          },
+        },
+      };
+      const { warnings, errors } = await configValidation.validateConfig(
+        config
+      );
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(errors).toMatchSnapshot();
+    });
+
+    it('errors if aliases have invalid url', async () => {
+      const config = {
+        aliases: {
+          example1: 'noturl',
+          example2: 'http://www.example.com',
+        },
+      };
+      const { warnings, errors } = await configValidation.validateConfig(
+        config
+      );
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(errors).toMatchSnapshot();
+    });
+
+    it('errors if fileMatch has wrong parent', async () => {
+      const config = {
+        fileMatch: ['foo'],
+        npm: {
+          fileMatch: ['package\\.json'],
+          gradle: {
+            fileMatch: ['bar'],
+          },
+        },
+        regexManagers: [
+          {
+            fileMatch: ['build.gradle'],
+            matchStrings: ['^(?<depName>foo)(?<currentValue>bar)$'],
+            datasourceTemplate: 'maven',
+            versioningTemplate: 'gradle',
+          },
+        ],
+      };
+      const { warnings, errors } = await configValidation.validateConfig(
+        config
+      );
+      expect(errors).toHaveLength(1);
+      expect(warnings).toHaveLength(1);
+      expect(errors).toMatchSnapshot();
+      expect(warnings).toMatchSnapshot();
+    });
+
+    it('validates preset values', async () => {
+      const config = {
+        extends: ['foo', 'bar', 42] as never,
+      };
+      const { warnings, errors } = await configValidation.validateConfig(
+        config,
+        true
+      );
+      expect(warnings).toHaveLength(0);
+      expect(errors).toHaveLength(1);
     });
   });
 });

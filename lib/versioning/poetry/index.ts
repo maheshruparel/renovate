@@ -1,7 +1,7 @@
-import { parseRange } from 'semver-utils';
 import { major, minor } from 'semver';
-import { api as npm } from '../npm';
+import { parseRange } from 'semver-utils';
 import { NewValueConfig, VersioningApi } from '../common';
+import { api as npm } from '../npm';
 
 export const id = 'poetry';
 export const displayName = 'Poetry';
@@ -19,19 +19,19 @@ function notEmpty(s: string): boolean {
 function poetry2npm(input: string): string {
   const versions = input
     .split(',')
-    .map(str => str.trim())
+    .map((str) => str.trim())
     .filter(notEmpty);
   return versions.join(' ');
 }
 
-// NOTE: This function is copied from cargo versionsing code.
+// NOTE: This function is copied from cargo versioning code.
 // Poetry uses commas (like in cargo) instead of spaces (like in npm)
 // for AND operation.
 function npm2poetry(input: string): string {
   // Note: this doesn't remove the ^
   const res = input
     .split(' ')
-    .map(str => str.trim())
+    .map((str) => str.trim())
     .filter(notEmpty);
   const operators = ['^', '~', '=', '>', '<', '<=', '>='];
   for (let i = 0; i < res.length - 1; i += 1) {
@@ -40,7 +40,7 @@ function npm2poetry(input: string): string {
       res.splice(i, 2, newValue);
     }
   }
-  return res.join(', ');
+  return res.join(', ').replace(/\s*,?\s*\|\|\s*,?\s*/, ' || ');
 }
 
 const isLessThanRange = (version: string, range: string): boolean =>
@@ -61,12 +61,7 @@ const minSatisfyingVersion = (versions: string[], range: string): string =>
 
 const isSingleVersion = (constraint: string): string | boolean =>
   (constraint.trim().startsWith('=') &&
-    isVersion(
-      constraint
-        .trim()
-        .substring(1)
-        .trim()
-    )) ||
+    isVersion(constraint.trim().substring(1).trim())) ||
   isVersion(constraint.trim());
 
 function handleShort(
@@ -79,11 +74,11 @@ function handleShort(
   const split = currentValue.split('.');
   if (split.length === 1) {
     // [^,~]4
-    return operator + toVersionMajor;
+    return `${operator}${toVersionMajor}`;
   }
   if (split.length === 2) {
     // [^,~]4.1
-    return operator + toVersionMajor + '.' + toVersionMinor;
+    return `${operator}${toVersionMajor}.${toVersionMinor}`;
   }
   return null;
 }

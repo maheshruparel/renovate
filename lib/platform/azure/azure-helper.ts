@@ -1,20 +1,18 @@
 import {
+  GitCommit,
   GitPullRequestMergeStrategy,
   GitRef,
-  GitCommit,
-  GitPullRequest,
 } from 'azure-devops-node-api/interfaces/GitInterfaces';
-
-import { Options } from 'simple-git/promise';
-import * as azureApi from './azure-got-wrapper';
 import { logger } from '../../logger';
-import { Pr } from '../common';
-import {
-  PR_STATE_CLOSED,
-  PR_STATE_MERGED,
-  PR_STATE_OPEN,
-} from '../../constants/pull-requests';
 import { HostRule } from '../../types';
+import { GitOptions } from '../../types/git';
+import { add } from '../../util/sanitize';
+import * as azureApi from './azure-got-wrapper';
+import {
+  getBranchNameWithoutRefsPrefix,
+  getBranchNameWithoutRefsheadsPrefix,
+  getNewBranchName,
+} from './util';
 
 const mergePolicyGuid = 'fa4e907d-c16b-4a4c-9dfa-4916e5d171ab'; // Magic GUID for merge strategy policy configurations
 
@@ -22,58 +20,23 @@ function toBase64(from: string): string {
   return Buffer.from(from).toString('base64');
 }
 
-export function getStorageExtraCloneOpts(config: HostRule): Options {
-  let header: string;
-  const headerName = 'AUTHORIZATION';
+export function getStorageExtraCloneOpts(config: HostRule): GitOptions {
+  let authType: string;
+  let authValue: string;
   if (!config.token && config.username && config.password) {
-    header = `${headerName}: basic ${toBase64(
-      `${config.username}:${config.password}`
-    )}`;
+    authType = 'basic';
+    authValue = toBase64(`${config.username}:${config.password}`);
   } else if (config.token.length !== 52) {
-    header = `${headerName}: bearer ${config.token}`;
+    authType = 'bearer';
+    authValue = config.token;
   } else {
-    header = `${headerName}: basic ${toBase64(`:${config.token}`)}`;
+    authType = 'basic';
+    authValue = toBase64(`:${config.token}`);
   }
-  return { '--config': `http.extraheader=${header}` };
-}
-
-export function getNewBranchName(branchName?: string): string {
-  if (branchName && !branchName.startsWith('refs/heads/')) {
-    return `refs/heads/${branchName}`;
-  }
-  return branchName;
-}
-
-export function getBranchNameWithoutRefsheadsPrefix(
-  branchPath: string
-): string | undefined {
-  if (!branchPath) {
-    logger.error(`getBranchNameWithoutRefsheadsPrefix(${branchPath})`);
-    return undefined;
-  }
-  if (!branchPath.startsWith('refs/heads/')) {
-    logger.trace(
-      `The refs/heads/ name should have started with 'refs/heads/' but it didn't. (${branchPath})`
-    );
-    return branchPath;
-  }
-  return branchPath.substring(11, branchPath.length);
-}
-
-function getBranchNameWithoutRefsPrefix(
-  branchPath?: string
-): string | undefined {
-  if (!branchPath) {
-    logger.error(`getBranchNameWithoutRefsPrefix(${branchPath})`);
-    return undefined;
-  }
-  if (!branchPath.startsWith('refs/')) {
-    logger.trace(
-      `The ref name should have started with 'refs/' but it didn't. (${branchPath})`
-    );
-    return branchPath;
-  }
-  return branchPath.substring(5, branchPath.length);
+  add(authValue);
+  return {
+    '-c': `http.extraheader=AUTHORIZATION: ${authType} ${authValue}`,
+  };
 }
 
 export async function getRefs(
@@ -118,7 +81,7 @@ export async function getAzureBranchObj(
 async function streamToString(stream: NodeJS.ReadableStream): Promise<string> {
   const chunks: string[] = [];
   /* eslint-disable promise/avoid-new */
-  const p = await new Promise<string>(resolve => {
+  const p = await new Promise<string>((resolve) => {
     stream.on('data', (chunk: any) => {
       chunks.push(chunk.toString());
     });
@@ -129,7 +92,7 @@ async function streamToString(stream: NodeJS.ReadableStream): Promise<string> {
   return p;
 }
 
-// if no branchName, look globaly
+// if no branchName, look globally
 export async function getFile(
   repoId: string,
   filePath: string,
@@ -153,7 +116,7 @@ export async function getFile(
     }
   );
 
-  if (item && item.readable) {
+  if (item?.readable) {
     const fileContent = await streamToString(item);
     try {
       const jTmp = JSON.parse(fileContent);
@@ -180,52 +143,6 @@ export function max4000Chars(str: string): string {
   return str;
 }
 
-export function getRenovatePRFormat(azurePr: GitPullRequest): Pr {
-  const pr: Pr = azurePr as any;
-
-  pr.displayNumber = `Pull Request #${azurePr.pullRequestId}`;
-  pr.number = azurePr.pullRequestId;
-  pr.body = azurePr.description;
-  pr.targetBranch = getBranchNameWithoutRefsheadsPrefix(azurePr.targetRefName);
-  pr.branchName = pr.targetBranch;
-  pr.createdAt = pr.creationDate;
-
-  // status
-  // export declare enum PullRequestStatus {
-  //   NotSet = 0,
-  //   Active = 1,
-  //   Abandoned = 2,
-  //   Completed = 3,
-  //   All = 4,
-  // }
-  if (azurePr.status === 2) {
-    pr.state = PR_STATE_CLOSED;
-  } else if (azurePr.status === 3) {
-    pr.state = PR_STATE_MERGED;
-  } else {
-    pr.state = PR_STATE_OPEN;
-  }
-
-  // mergeStatus
-  // export declare enum PullRequestAsyncStatus {
-  //   NotSet = 0,
-  //   Queued = 1,
-  //   Conflicts = 2,
-  //   Succeeded = 3,
-  //   RejectedByPolicy = 4,
-  //   Failure = 5,
-  // }
-  if (azurePr.mergeStatus === 2) {
-    pr.isConflicted = true;
-  }
-
-  // value is updated later to be correct for
-  // specific pr's after filtering, for performance
-  pr.isModified = false;
-
-  return pr;
-}
-
 export async function getCommitDetails(
   commit: string,
   repoId: string
@@ -240,17 +157,17 @@ export function getProjectAndRepo(
   str: string
 ): { project: string; repo: string } {
   logger.trace(`getProjectAndRepo(${str})`);
-  const strSplited = str.split(`/`);
-  if (strSplited.length === 1) {
+  const strSplit = str.split(`/`);
+  if (strSplit.length === 1) {
     return {
       project: str,
       repo: str,
     };
   }
-  if (strSplited.length === 2) {
+  if (strSplit.length === 2) {
     return {
-      project: strSplited[0],
-      repo: strSplited[1],
+      project: strSplit[0],
+      repo: strSplit[1],
     };
   }
   const msg = `${str} can be only structured this way : 'repository' or 'projectName/repository'!`;
@@ -266,16 +183,16 @@ export async function getMergeMethod(
     await (await azureApi.policyApi()).getPolicyConfigurations(project)
   )
     .filter(
-      p =>
-        p.settings.scope.some(s => s.repositoryId === repoId) &&
+      (p) =>
+        p.settings.scope.some((s) => s.repositoryId === repoId) &&
         p.type.id === mergePolicyGuid
     )
-    .map(p => p.settings)[0];
+    .map((p) => p.settings)[0];
 
   try {
     return Object.keys(policyConfigurations)
-      .map(p => GitPullRequestMergeStrategy[p.slice(5)])
-      .find(p => p);
+      .map((p) => GitPullRequestMergeStrategy[p.slice(5)])
+      .find((p) => p);
   } catch (err) {
     return GitPullRequestMergeStrategy.NoFastForward;
   }

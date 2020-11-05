@@ -1,12 +1,22 @@
 import crypto from 'crypto';
-import { api } from '../../platform/github/gh-got-wrapper';
-import { GetReleasesConfig, ReleaseResult } from '../common';
+import { HOST_DISABLED } from '../../constants/error-messages';
 import { logger } from '../../logger';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import * as packageCache from '../../util/cache/package';
+import { Http, HttpError } from '../../util/http';
+import { GithubHttp } from '../../util/http/github';
+import { GetReleasesConfig, ReleaseResult } from '../common';
 
 export const id = 'pod';
 
+export const defaultRegistryUrls = ['https://cdn.cocoapods.org'];
+export const registryStrategy = 'hunt';
+
 const cacheNamespace = `datasource-${id}`;
 const cacheMinutes = 30;
+
+const githubHttp = new GithubHttp();
+const http = new Http(id);
 
 function shardParts(lookupName: string): string[] {
   return crypto
@@ -28,34 +38,54 @@ function releasesGithubUrl(
   return `${prefix}/${account}/${repo}/contents/Specs/${suffix}`;
 }
 
-async function makeRequest<T = unknown>(
+function handleError(lookupName: string, err: HttpError): void {
+  const errorData = { lookupName, err };
+
+  const statusCode = err.response?.statusCode;
+  if (statusCode === 429 || (statusCode >= 500 && statusCode < 600)) {
+    logger.warn({ lookupName, err }, `CocoaPods registry failure`);
+    throw new ExternalHostError(err);
+  }
+
+  if (statusCode === 401) {
+    logger.debug(errorData, 'Authorization error');
+  } else if (statusCode === 404) {
+    logger.debug(errorData, 'Package lookup error');
+  } else if (err.message === HOST_DISABLED) {
+    // istanbul ignore next
+    logger.trace(errorData, 'Host disabled');
+  } else {
+    logger.warn(errorData, 'CocoaPods lookup failure: Unknown error');
+  }
+}
+
+async function requestCDN(
   url: string,
-  lookupName: string,
-  json = true
-): Promise<T | null> {
+  lookupName: string
+): Promise<string | null> {
   try {
-    const resp = await api.get(url, { json });
-    if (resp && resp.body) {
+    const resp = await http.get(url);
+    if (resp?.body) {
       return resp.body;
     }
   } catch (err) {
-    const errorData = { lookupName, err };
+    handleError(lookupName, err);
+  }
 
-    if (
-      err.statusCode === 429 ||
-      (err.statusCode >= 500 && err.statusCode < 600)
-    ) {
-      logger.warn({ lookupName, err }, `CocoaPods registry failure`);
-      throw new Error('registry-failure');
-    }
+  return null;
+}
 
-    if (err.statusCode === 401) {
-      logger.debug(errorData, 'Authorization error');
-    } else if (err.statusCode === 404) {
-      logger.debug(errorData, 'Package lookup error');
-    } else {
-      logger.warn(errorData, 'CocoaPods lookup failure: Unknown error');
+async function requestGithub<T = unknown>(
+  url: string,
+  lookupName: string
+): Promise<T | null> {
+  try {
+    const resp = await githubHttp.getJson<T>(url);
+    if (resp?.body) {
+      return resp.body;
     }
+  } catch (err) {
+    handleError(lookupName, err);
   }
 
   return null;
@@ -69,10 +99,10 @@ async function getReleasesFromGithub(
   useShard = false
 ): Promise<ReleaseResult | null> {
   const match = githubRegex.exec(registryUrl);
-  const { account, repo } = (match && match.groups) || {};
+  const { account, repo } = match?.groups || {};
   const opts = { account, repo, useShard };
   const url = releasesGithubUrl(lookupName, opts);
-  const resp = await makeRequest<{ name: string }[]>(url, lookupName);
+  const resp = await requestGithub<{ name: string }[]>(url, lookupName);
   if (resp) {
     const releases = resp.map(({ name }) => ({ version: name }));
     return { releases };
@@ -95,22 +125,20 @@ async function getReleasesFromCDN(
   registryUrl: string
 ): Promise<ReleaseResult | null> {
   const url = releasesCDNUrl(lookupName, registryUrl);
-  const resp = await makeRequest<string>(url, lookupName, false);
+  const resp = await requestCDN(url, lookupName);
   if (resp) {
     const lines = resp.split('\n');
     for (let idx = 0; idx < lines.length; idx += 1) {
       const line = lines[idx];
       const [name, ...versions] = line.split('/');
       if (name === lookupName.replace(/\/.*$/, '')) {
-        const releases = versions.map(version => ({ version }));
+        const releases = versions.map((version) => ({ version }));
         return { releases };
       }
     }
   }
   return null;
 }
-
-const defaultCDN = 'https://cdn.cocoapods.org';
 
 function isDefaultRepo(url: string): boolean {
   const match = githubRegex.exec(url);
@@ -123,45 +151,38 @@ function isDefaultRepo(url: string): boolean {
   return false;
 }
 
-export async function getPkgReleases(
-  config: GetReleasesConfig
-): Promise<ReleaseResult | null> {
-  const { lookupName } = config;
-  let { registryUrls } = config;
-  registryUrls =
-    registryUrls && registryUrls.length ? registryUrls : [defaultCDN];
-
+export async function getReleases({
+  lookupName,
+  registryUrl,
+}: GetReleasesConfig): Promise<ReleaseResult | null> {
   const podName = lookupName.replace(/\/.*$/, '');
 
-  const cachedResult = await renovateCache.get<ReleaseResult>(
+  const cachedResult = await packageCache.get<ReleaseResult>(
     cacheNamespace,
-    podName
+    registryUrl + podName
   );
-  /* istanbul ignore next line */
-  if (cachedResult) {
-    logger.debug(`CocoaPods: Return cached result for ${podName}`);
+
+  // istanbul ignore if
+  if (cachedResult !== undefined) {
+    logger.trace(`CocoaPods: Return cached result for ${podName}`);
     return cachedResult;
   }
 
+  let baseUrl = registryUrl.replace(/\/+$/, '');
+
+  // In order to not abuse github API limits, query CDN instead
+  if (isDefaultRepo(baseUrl)) {
+    [baseUrl] = defaultRegistryUrls;
+  }
+
   let result: ReleaseResult | null = null;
-  for (let idx = 0; !result && idx < registryUrls.length; idx += 1) {
-    let registryUrl = registryUrls[idx].replace(/\/+$/, '');
-
-    // In order to not abuse github API limits, query CDN instead
-    if (isDefaultRepo(registryUrl)) {
-      registryUrl = defaultCDN;
-    }
-
-    if (githubRegex.exec(registryUrl)) {
-      result = await getReleasesFromGithub(podName, registryUrl);
-    } else {
-      result = await getReleasesFromCDN(podName, registryUrl);
-    }
+  if (githubRegex.exec(baseUrl)) {
+    result = await getReleasesFromGithub(podName, baseUrl);
+  } else {
+    result = await getReleasesFromCDN(podName, baseUrl);
   }
 
-  if (result) {
-    await renovateCache.set(cacheNamespace, podName, result, cacheMinutes);
-  }
+  await packageCache.set(cacheNamespace, podName, result, cacheMinutes);
 
   return result;
 }

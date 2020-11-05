@@ -1,7 +1,7 @@
-import path from 'path';
 import fs from 'fs';
-import * as file from './file';
+import path from 'path';
 import customConfig from './config/__fixtures__/file';
+import * as file from './file';
 
 describe('config/file', () => {
   describe('.getConfig()', () => {
@@ -39,7 +39,7 @@ describe('config/file', () => {
         "logFileLevel": "warn",
         "logLevel": "info",
         "onboarding": false,
-        "gitAuthor": "Renovate Bot <bot@renovateapp.com>"
+        "gitAuthor": "Renovate Bot <renovate@whitesourcesoftware.com>"
         "onboardingConfig": {
           "extends": ["config:base"],
         },

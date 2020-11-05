@@ -1,6 +1,6 @@
 import { gte, lte, satisfies } from '@renovate/pep440';
-import { parse as parseVersion } from '@renovate/pep440/lib/version';
 import { parse as parseRange } from '@renovate/pep440/lib/specifier';
+import { parse as parseVersion } from '@renovate/pep440/lib/version';
 import { logger } from '../../logger';
 import { NewValueConfig } from '../common';
 
@@ -45,6 +45,9 @@ export function getNewValue({
   if (rangeStrategy === 'pin') {
     return '==' + toVersion;
   }
+  if (currentValue === fromVersion) {
+    return toVersion;
+  }
   const ranges: Range[] = parseRange(currentValue);
   if (!ranges) {
     logger.warn('Invalid currentValue: ' + currentValue);
@@ -74,13 +77,13 @@ export function getNewValue({
       toVersion,
     });
   }
-  if (ranges.some(range => range.operator === '===')) {
+  if (ranges.some((range) => range.operator === '===')) {
     // the operator "===" is used for legacy non PEP440 versions
     logger.warn('Arbitrary equality not supported: ' + currentValue);
     return null;
   }
   let result = ranges
-    .map(range => {
+    .map((range) => {
       // used to exclude versions,
       // we assume that's for a good reason
       if (range.operator === '!=') {
@@ -144,7 +147,7 @@ export function getNewValue({
     // we failed at creating the range
     logger.error(
       { result, toVersion, currentValue },
-      'pep440: failed to calcuate newValue'
+      'pep440: failed to calculate newValue'
     );
     return null;
   }

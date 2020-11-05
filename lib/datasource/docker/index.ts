@@ -1,21 +1,55 @@
-import is from '@sindresorhus/is';
-import hasha from 'hasha';
+import { OutgoingHttpHeaders } from 'http';
 import URL from 'url';
+import AWS from 'aws-sdk';
+import hasha from 'hasha';
 import parseLinkHeader from 'parse-link-header';
 import wwwAuthenticate from 'www-authenticate';
-import { OutgoingHttpHeaders } from 'http';
-import AWS from 'aws-sdk';
+import { HOST_DISABLED } from '../../constants/error-messages';
 import { logger } from '../../logger';
-import got from '../../util/got';
-import * as hostRules from '../../util/host-rules';
-import { DatasourceError, GetReleasesConfig, ReleaseResult } from '../common';
-import { GotResponse } from '../../platform';
 import { HostRule } from '../../types';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import * as packageCache from '../../util/cache/package';
+import * as hostRules from '../../util/host-rules';
+import { Http, HttpResponse } from '../../util/http';
+import { GetReleasesConfig, ReleaseResult } from '../common';
 
 // TODO: add got typings when available
 // TODO: replace www-authenticate with https://www.npmjs.com/package/auth-header ?
 
 export const id = 'docker';
+export const defaultRegistryUrls = ['https://index.docker.io'];
+export const registryStrategy = 'first';
+
+export const defaultConfig = {
+  additionalBranchPrefix: 'docker-',
+  commitMessageTopic: '{{{depName}}} Docker tag',
+  major: { enabled: false },
+  commitMessageExtra:
+    'to v{{#if isMajor}}{{{newMajor}}}{{else}}{{{newVersion}}}{{/if}}',
+  digest: {
+    branchTopic: '{{{depNameSanitized}}}-{{{currentValue}}}',
+    commitMessageExtra: 'to {{newDigestShort}}',
+    commitMessageTopic:
+      '{{{depName}}}{{#if currentValue}}:{{{currentValue}}}{{/if}} Docker digest',
+    group: {
+      commitMessageTopic: '{{{groupName}}}',
+      commitMessageExtra: '',
+    },
+  },
+  pin: {
+    commitMessageExtra: '',
+    groupName: 'Docker digests',
+    group: {
+      commitMessageTopic: '{{{groupName}}}',
+      branchTopic: 'digests-pin',
+    },
+  },
+  group: {
+    commitMessageTopic: '{{{groupName}}} Docker tags',
+  },
+};
+
+const http = new Http(id);
 
 const ecrRegex = /\d+\.dkr\.ecr\.([-a-z0-9]+)\.amazonaws\.com/;
 
@@ -26,8 +60,19 @@ export interface RegistryRepository {
 
 export function getRegistryRepository(
   lookupName: string,
-  registryUrls: string[]
+  registryUrl: string
 ): RegistryRepository {
+  if (registryUrl !== defaultRegistryUrls[0]) {
+    const dockerRegistry = registryUrl
+      .replace('https://', '')
+      .replace(/\/?$/, '/');
+    if (lookupName.startsWith(dockerRegistry)) {
+      return {
+        registry: dockerRegistry,
+        repository: lookupName.replace(dockerRegistry, ''),
+      };
+    }
+  }
   let registry: string;
   const split = lookupName.split('/');
   if (split.length > 1 && (split[0].includes('.') || split[0].includes(':'))) {
@@ -35,17 +80,17 @@ export function getRegistryRepository(
     split.shift();
   }
   let repository = split.join('/');
-  if (!registry && is.nonEmptyArray(registryUrls)) {
-    [registry] = registryUrls;
+  if (!registry) {
+    registry = registryUrl;
   }
-  if (!registry || registry === 'docker.io') {
+  if (registry === 'docker.io') {
     registry = 'index.docker.io';
   }
   if (!/^https?:\/\//.exec(registry)) {
     registry = `https://${registry}`;
   }
   const opts = hostRules.find({ hostType: id, url: registry });
-  if (opts && opts.insecureRegistry) {
+  if (opts?.insecureRegistry) {
     registry = registry.replace('https', 'http');
   }
   if (registry.endsWith('.docker.io') && !repository.includes('/')) {
@@ -67,7 +112,7 @@ function getECRAuthToken(
     config.secretAccessKey = opts.password;
   }
   const ecr = new AWS.ECR(config);
-  return new Promise<string>(resolve => {
+  return new Promise<string>((resolve) => {
     ecr.getAuthorizationToken({}, (err, data) => {
       if (err) {
         logger.trace({ err }, 'err');
@@ -75,10 +120,7 @@ function getECRAuthToken(
         resolve(null);
       } else {
         const authorizationToken =
-          data &&
-          data.authorizationData &&
-          data.authorizationData[0] &&
-          data.authorizationData[0].authorizationToken;
+          data?.authorizationData?.[0]?.authorizationToken;
         if (authorizationToken) {
           resolve(authorizationToken);
         } else {
@@ -98,7 +140,9 @@ async function getAuthHeaders(
 ): Promise<OutgoingHttpHeaders | null> {
   try {
     const apiCheckUrl = `${registry}/v2/`;
-    const apiCheckResponse = await got(apiCheckUrl, { throwHttpErrors: false });
+    const apiCheckResponse = await http.get(apiCheckUrl, {
+      throwHttpErrors: false,
+    });
     if (apiCheckResponse.headers['www-authenticate'] === undefined) {
       return {};
     }
@@ -109,7 +153,6 @@ async function getAuthHeaders(
     const opts: HostRule & {
       headers?: Record<string, string>;
     } = hostRules.find({ hostType: id, url: apiCheckUrl });
-    opts.json = true;
     if (ecrRegex.test(registry)) {
       const [, region] = ecrRegex.exec(registry);
       const auth = await getECRAuthToken(region, opts);
@@ -127,16 +170,21 @@ async function getAuthHeaders(
 
     if (authenticateHeader.scheme.toUpperCase() === 'BASIC') {
       logger.debug(`Using Basic auth for docker registry ${repository}`);
-      await got(apiCheckUrl, opts);
+      await http.get(apiCheckUrl, opts);
       return opts.headers;
     }
 
     // prettier-ignore
-    const authUrl = `${authenticateHeader.parms.realm}?service=${authenticateHeader.parms.service}&scope=repository:${repository}:pull`;
+    const authUrl = `${String(authenticateHeader.parms.realm)}?service=${String(authenticateHeader.parms.service)}&scope=repository:${repository}:pull`;
     logger.trace(
       `Obtaining docker registry token for ${repository} using url ${authUrl}`
     );
-    const authResponse = (await got(authUrl, opts)).body;
+    const authResponse = (
+      await http.getJson<{ token?: string; access_token?: string }>(
+        authUrl,
+        opts
+      )
+    ).body;
 
     const token = authResponse.token || authResponse.access_token;
     // istanbul ignore if
@@ -148,6 +196,10 @@ async function getAuthHeaders(
       authorization: `Bearer ${token}`,
     };
   } catch (err) /* istanbul ignore next */ {
+    if (err.host === 'quay.io') {
+      // TODO: debug why quay throws errors
+      return null;
+    }
     if (err.statusCode === 401) {
       logger.debug(
         { registry, dockerRepository: repository },
@@ -166,14 +218,21 @@ async function getAuthHeaders(
     }
     // prettier-ignore
     if (err.name === 'RequestError' && registry.endsWith('docker.io')) { // lgtm [js/incomplete-url-substring-sanitization]
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
     // prettier-ignore
     if (err.statusCode === 429 && registry.endsWith('docker.io')) { // lgtm [js/incomplete-url-substring-sanitization]
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
     if (err.statusCode >= 500 && err.statusCode < 600) {
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
+    }
+    if (err.message === HOST_DISABLED) {
+      logger.trace(
+        { registry, dockerRepository: repository, err },
+        'Host disabled'
+      );
+      return null;
     }
     logger.warn(
       { registry, dockerRepository: repository, err },
@@ -187,7 +246,7 @@ function digestFromManifestStr(str: hasha.HashaInput): string {
   return 'sha256:' + hasha(str, { algorithm: 'sha256' });
 }
 
-function extractDigestFromResponse(manifestResponse: GotResponse): string {
+function extractDigestFromResponse(manifestResponse: HttpResponse): string {
   if (manifestResponse.headers['docker-content-digest'] === undefined) {
     return digestFromManifestStr(manifestResponse.body);
   }
@@ -198,7 +257,7 @@ async function getManifestResponse(
   registry: string,
   repository: string,
   tag: string
-): Promise<GotResponse> {
+): Promise<HttpResponse> {
   logger.debug(`getManifestResponse(${registry}, ${repository}, ${tag})`);
   try {
     const headers = await getAuthHeaders(registry, repository);
@@ -208,12 +267,12 @@ async function getManifestResponse(
     }
     headers.accept = 'application/vnd.docker.distribution.manifest.v2+json';
     const url = `${registry}/v2/${repository}/manifests/${tag}`;
-    const manifestResponse = await got(url, {
+    const manifestResponse = await http.get(url, {
       headers,
     });
     return manifestResponse;
   } catch (err) /* istanbul ignore next */ {
-    if (err instanceof DatasourceError) {
+    if (err instanceof ExternalHostError) {
       throw err;
     }
     if (err.statusCode === 401) {
@@ -238,10 +297,10 @@ async function getManifestResponse(
     }
     // prettier-ignore
     if (err.statusCode === 429 && registry.endsWith('docker.io')) { // lgtm [js/incomplete-url-substring-sanitization]
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
     if (err.statusCode >= 500 && err.statusCode < 600) {
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
     if (err.code === 'ETIMEDOUT') {
       logger.debug(
@@ -274,21 +333,25 @@ async function getManifestResponse(
  *  - Return the digest as a string
  */
 export async function getDigest(
-  { registryUrls, lookupName }: GetReleasesConfig,
+  { registryUrl, lookupName }: GetReleasesConfig,
   newValue?: string
 ): Promise<string | null> {
   const { registry, repository } = getRegistryRepository(
     lookupName,
-    registryUrls
+    registryUrl
   );
   logger.debug(`getDigest(${registry}, ${repository}, ${newValue})`);
   const newTag = newValue || 'latest';
+  const cacheNamespace = 'datasource-docker-digest';
+  const cacheKey = `${registry}:${repository}:${newTag}`;
+  let digest: string = null;
   try {
-    const cacheNamespace = 'datasource-docker-digest';
-    const cacheKey = `${registry}:${repository}:${newTag}`;
-    const cachedResult = await renovateCache.get(cacheNamespace, cacheKey);
+    const cachedResult = await packageCache.get<string>(
+      cacheNamespace,
+      cacheKey
+    );
     // istanbul ignore if
-    if (cachedResult) {
+    if (cachedResult !== undefined) {
       return cachedResult;
     }
     const manifestResponse = await getManifestResponse(
@@ -296,16 +359,12 @@ export async function getDigest(
       repository,
       newTag
     );
-    if (!manifestResponse) {
-      return null;
+    if (manifestResponse) {
+      digest = extractDigestFromResponse(manifestResponse) || null;
+      logger.debug({ digest }, 'Got docker digest');
     }
-    const digest = extractDigestFromResponse(manifestResponse);
-    logger.debug({ digest }, 'Got docker digest');
-    const cacheMinutes = 30;
-    await renovateCache.set(cacheNamespace, cacheKey, digest, cacheMinutes);
-    return digest;
   } catch (err) /* istanbul ignore next */ {
-    if (err instanceof DatasourceError) {
+    if (err instanceof ExternalHostError) {
       throw err;
     }
     logger.debug(
@@ -316,8 +375,10 @@ export async function getDigest(
       },
       'Unknown Error looking up docker image digest'
     );
-    return null;
   }
+  const cacheMinutes = 30;
+  await packageCache.set(cacheNamespace, cacheKey, digest, cacheMinutes);
+  return digest;
 }
 
 async function getTags(
@@ -328,12 +389,12 @@ async function getTags(
   try {
     const cacheNamespace = 'datasource-docker-tags';
     const cacheKey = `${registry}:${repository}`;
-    const cachedResult = await renovateCache.get<string[]>(
+    const cachedResult = await packageCache.get<string[]>(
       cacheNamespace,
       cacheKey
     );
     // istanbul ignore if
-    if (cachedResult) {
+    if (cachedResult !== undefined) {
       return cachedResult;
     }
     // AWS ECR limits the maximum number of results to 1000
@@ -347,40 +408,24 @@ async function getTags(
     }
     let page = 1;
     do {
-      const res = await got<{ tags: string[] }>(url, { json: true, headers });
+      const res = await http.getJson<{ tags: string[] }>(url, { headers });
       tags = tags.concat(res.body.tags);
       const linkHeader = parseLinkHeader(res.headers.link as string);
-      url =
-        linkHeader && linkHeader.next
-          ? URL.resolve(url, linkHeader.next.url)
-          : null;
+      url = linkHeader?.next ? URL.resolve(url, linkHeader.next.url) : null;
       page += 1;
     } while (url && page < 20);
     const cacheMinutes = 15;
-    await renovateCache.set(cacheNamespace, cacheKey, tags, cacheMinutes);
+    await packageCache.set(cacheNamespace, cacheKey, tags, cacheMinutes);
     return tags;
   } catch (err) /* istanbul ignore next */ {
-    if (err instanceof DatasourceError) {
+    if (err instanceof ExternalHostError) {
       throw err;
     }
-    logger.debug(
-      {
-        err,
-      },
-      'docker.getTags() error'
-    );
     if (err.statusCode === 404 && !repository.includes('/')) {
       logger.debug(
         `Retrying Tags for ${registry}/${repository} using library/ prefix`
       );
       return getTags(registry, 'library/' + repository);
-    }
-    if (err.statusCode === 401 || err.statusCode === 403) {
-      logger.debug(
-        { registry, dockerRepository: repository, err },
-        'Not authorised to look up docker tags'
-      );
-      return null;
     }
     // prettier-ignore
     if (err.statusCode === 429 && registry.endsWith('docker.io')) { // lgtm [js/incomplete-url-substring-sanitization]
@@ -388,59 +433,17 @@ async function getTags(
         { registry, dockerRepository: repository, err },
         'docker registry failure: too many requests'
       );
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
     if (err.statusCode >= 500 && err.statusCode < 600) {
       logger.warn(
         { registry, dockerRepository: repository, err },
         'docker registry failure: internal error'
       );
-      throw new DatasourceError(err);
+      throw new ExternalHostError(err);
     }
-    if (err.code === 'ETIMEDOUT') {
-      logger.debug(
-        { registry },
-        'Timeout when attempting to connect to docker registry'
-      );
-      return null;
-    }
-    logger.warn(
-      { registry, dockerRepository: repository, err },
-      'Error getting docker image tags'
-    );
-    return null;
+    throw err;
   }
-}
-
-export function getConfigResponse(
-  url: string,
-  headers: OutgoingHttpHeaders
-): Promise<GotResponse> {
-  return got(url, {
-    headers,
-    hooks: {
-      beforeRedirect: [
-        (options: any): void => {
-          if (
-            options.search &&
-            options.search.indexOf('X-Amz-Algorithm') !== -1
-          ) {
-            // if there is no port in the redirect URL string, then delete it from the redirect options.
-            // This can be evaluated for removal after upgrading to Got v10
-            const portInUrl = options.href.split('/')[2].split(':')[1];
-            if (!portInUrl) {
-              // eslint-disable-next-line no-param-reassign
-              delete options.port; // Redirect will instead use 80 or 443 for HTTP or HTTPS respectively
-            }
-
-            // docker registry is hosted on amazon, redirect url includes authentication.
-            // eslint-disable-next-line no-param-reassign
-            delete options.headers.authorization;
-          }
-        },
-      ],
-    },
-  });
 }
 
 /*
@@ -450,7 +453,6 @@ export function getConfigResponse(
  *  - Return the labels for the requested image
  */
 
-// istanbul ignore next
 async function getLabels(
   registry: string,
   repository: string,
@@ -459,12 +461,12 @@ async function getLabels(
   logger.debug(`getLabels(${registry}, ${repository}, ${tag})`);
   const cacheNamespace = 'datasource-docker-labels';
   const cacheKey = `${registry}:${repository}:${tag}`;
-  const cachedResult = await renovateCache.get<Record<string, string>>(
+  const cachedResult = await packageCache.get<Record<string, string>>(
     cacheNamespace,
     cacheKey
   );
   // istanbul ignore if
-  if (cachedResult) {
+  if (cachedResult !== undefined) {
     return cachedResult;
   }
   try {
@@ -476,6 +478,7 @@ async function getLabels(
     // If getting the manifest fails here, then abort
     // This means that the latest tag doesn't have a manifest, which shouldn't
     // be possible
+    // istanbul ignore if
     if (!manifestResponse) {
       logger.debug(
         {
@@ -497,14 +500,17 @@ async function getLabels(
       return {};
     }
     let labels: Record<string, string> = {};
-    const configDigest = manifest.config.digest;
+    const configDigest: string = manifest.config.digest;
     const headers = await getAuthHeaders(registry, repository);
+    // istanbul ignore if: Should never be happen
     if (!headers) {
       logger.debug('No docker auth found - returning');
       return {};
     }
     const url = `${registry}/v2/${repository}/blobs/${configDigest}`;
-    const configResponse = await getConfigResponse(url, headers);
+    const configResponse = await http.get(url, {
+      headers,
+    });
     labels = JSON.parse(configResponse.body).config.Labels;
 
     if (labels) {
@@ -516,18 +522,17 @@ async function getLabels(
       );
     }
     const cacheMinutes = 60;
-    await renovateCache.set(cacheNamespace, cacheKey, labels, cacheMinutes);
+    await packageCache.set(cacheNamespace, cacheKey, labels, cacheMinutes);
     return labels;
-  } catch (err) {
-    if (err instanceof DatasourceError) {
+  } catch (err) /* istanbul ignore next: should be tested in future */ {
+    if (err instanceof ExternalHostError) {
       throw err;
     }
-    if (err.statusCode === 401) {
+    if (err.statusCode === 400 || err.statusCode === 401) {
       logger.debug(
-        { registry, dockerRepository: repository },
+        { registry, dockerRepository: repository, err },
         'Unauthorized docker lookup'
       );
-      logger.debug({ err });
     } else if (err.statusCode === 404) {
       logger.warn(
         {
@@ -544,7 +549,7 @@ async function getLabels(
     ) {
       logger.warn({ err }, 'docker registry failure: too many requests');
     } else if (err.statusCode >= 500 && err.statusCode < 600) {
-      logger.warn(
+      logger.debug(
         {
           err,
           registry,
@@ -553,19 +558,18 @@ async function getLabels(
         },
         'docker registry failure: internal error'
       );
-    } else if (err.code === 'ETIMEDOUT') {
-      logger.debug(
-        { registry },
-        'Timeout when attempting to connect to docker registry'
-      );
-      logger.debug({ err });
+    } else if (
+      err.code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+      err.code === 'ETIMEDOUT'
+    ) {
+      logger.debug({ registry, err }, 'Error connecting to docker registry');
     } else if (registry === 'https://quay.io') {
       // istanbul ignore next
       logger.debug(
         'Ignoring quay.io errors until they fully support v2 schema'
       );
     } else {
-      logger.warn(
+      logger.info(
         { registry, dockerRepository: repository, tag, err },
         'Unknown error getting Docker labels'
       );
@@ -575,7 +579,7 @@ async function getLabels(
 }
 
 /**
- * docker.getPkgReleases
+ * docker.getReleases
  *
  * A docker image usually looks something like this: somehost.io/owner/repo:8.1.0-alpine
  * In the above:
@@ -585,19 +589,19 @@ async function getLabels(
  *
  * This function will filter only tags that contain a semver version
  */
-export async function getPkgReleases({
+export async function getReleases({
   lookupName,
-  registryUrls,
+  registryUrl,
 }: GetReleasesConfig): Promise<ReleaseResult | null> {
   const { registry, repository } = getRegistryRepository(
     lookupName,
-    registryUrls
+    registryUrl
   );
   const tags = await getTags(registry, repository);
   if (!tags) {
     return null;
   }
-  const releases = tags.map(version => ({ version }));
+  const releases = tags.map((version) => ({ version }));
   const ret: ReleaseResult = {
     dockerRegistry: registry,
     dockerRepository: repository,
@@ -606,7 +610,6 @@ export async function getPkgReleases({
 
   const latestTag = tags.includes('latest') ? 'latest' : tags[tags.length - 1];
   const labels = await getLabels(registry, repository, latestTag);
-  // istanbul ignore if
   if (labels && 'org.opencontainers.image.source' in labels) {
     ret.sourceUrl = labels['org.opencontainers.image.source'];
   }

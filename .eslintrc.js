@@ -8,6 +8,8 @@ module.exports = {
     'plugin:import/errors',
     'plugin:import/warnings',
     'plugin:import/typescript',
+    'plugin:jest/recommended',
+    'plugin:jest/style',
     // https://github.com/typescript-eslint/typescript-eslint/tree/master/packages/eslint-plugin/src/configs
     'plugin:@typescript-eslint/eslint-recommended',
     'plugin:@typescript-eslint/recommended',
@@ -41,16 +43,33 @@ module.exports = {
     'prefer-template': 0,
     'no-underscore-dangle': 0,
 
-    // Makes no sense to allow type inferrence for expression parameters, but require typing the response
+    'sort-imports': [
+      'error',
+      {
+        ignoreCase: false,
+        ignoreDeclarationSort: true, // conflicts with our other import ordering rules
+        ignoreMemberSort: false,
+        memberSyntaxSortOrder: ['none', 'all', 'multiple', 'single'],
+      },
+    ],
+    'import/order': [
+      'error',
+      {
+        alphabetize: {
+          order: 'asc',
+        },
+      },
+    ],
+
+    // Makes no sense to allow type inference for expression parameters, but require typing the response
     '@typescript-eslint/explicit-function-return-type': [
       'error',
       { allowExpressions: true, allowTypedFunctionExpressions: true },
     ],
 
     // TODO: fix lint
-    '@typescript-eslint/camelcase': 0, // disabled until ??
     '@typescript-eslint/no-explicit-any': 0,
-    '@typescript-eslint/no-non-null-assertion': 0,
+    '@typescript-eslint/no-non-null-assertion': 2,
     '@typescript-eslint/no-unused-vars': [
       2,
       {
@@ -58,16 +77,38 @@ module.exports = {
         args: 'none',
         ignoreRestSiblings: false,
       },
-    ], // disable until proper interfaced api
+    ],
+    '@typescript-eslint/prefer-optional-chain': 2,
+    '@typescript-eslint/prefer-nullish-coalescing': 2,
     curly: [2, 'all'],
+    'require-await': 2,
+    // next 2 rules disabled due to https://github.com/microsoft/TypeScript/issues/20024
+    '@typescript-eslint/no-unsafe-assignment': 0,
+    '@typescript-eslint/no-unsafe-member-access': 0,
+
+    // TODO: fix me
+    '@typescript-eslint/no-unsafe-return': 0,
+    '@typescript-eslint/no-unsafe-call': 0,
+
+    '@typescript-eslint/restrict-template-expressions': [
+      1,
+      { allowNumber: true, allowBoolean: true },
+    ],
+    '@typescript-eslint/restrict-plus-operands': 2,
+
+    '@typescript-eslint/naming-convention': 2,
+
+    '@typescript-eslint/unbound-method': 2,
+    '@typescript-eslint/ban-types': 2,
   },
   settings: {
-    // https://github.com/benmosher/eslint-plugin-import/issues/1618
-    'import/internal-regex': '^type\\-fest$',
+    'import/parsers': {
+      '@typescript-eslint/parser': ['.ts'],
+    },
   },
   overrides: [
     {
-      files: ['**/*.spec.ts'],
+      files: ['**/*.spec.ts', 'test/**'],
       env: {
         jest: true,
       },
@@ -81,6 +122,8 @@ module.exports = {
         '@typescript-eslint/no-object-literal-type-assertion': 0,
         '@typescript-eslint/explicit-function-return-type': 0,
         '@typescript-eslint/unbound-method': 0,
+
+        'jest/valid-title': [0, { ignoreTypeOfDescribeName: true }],
       },
     },
     {
@@ -88,6 +131,8 @@ module.exports = {
 
       rules: {
         '@typescript-eslint/explicit-function-return-type': 0,
+        '@typescript-eslint/explicit-module-boundary-types': 0,
+        '@typescript-eslint/restrict-template-expressions': 0,
       },
     },
   ],

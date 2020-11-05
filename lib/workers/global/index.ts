@@ -1,41 +1,18 @@
-import is from '@sindresorhus/is';
-import fs from 'fs-extra';
-import os from 'os';
 import path from 'path';
-import { setEmojiConfig } from '../../util/emoji';
-import { logger, setMeta, getErrors } from '../../logger';
+import is from '@sindresorhus/is';
+import { ERROR } from 'bunyan';
+import fs from 'fs-extra';
 import * as configParser from '../../config';
-import * as repositoryWorker from '../repository';
-import * as cache from './cache';
-import { autodiscoverRepositories } from './autodiscover';
-import { initPlatform } from '../../platform';
-import * as hostRules from '../../util/host-rules';
-import * as limits from './limits';
+import { getProblems, logger, setMeta } from '../../logger';
 import { setUtilConfig } from '../../util';
+import * as hostRules from '../../util/host-rules';
+import * as repositoryWorker from '../repository';
+import { autodiscoverRepositories } from './autodiscover';
+import { globalFinalize, globalInitialize } from './initialize';
+import { Limit, isLimitReached } from './limits';
 
 type RenovateConfig = configParser.RenovateConfig;
 type RenovateRepository = configParser.RenovateRepository;
-
-async function setDirectories(input: RenovateConfig): Promise<RenovateConfig> {
-  const config: RenovateConfig = { ...input };
-  process.env.TMPDIR = process.env.RENOVATE_TMPDIR || os.tmpdir();
-  if (config.baseDir) {
-    logger.debug('Using configured baseDir: ' + config.baseDir);
-  } else {
-    config.baseDir = path.join(process.env.TMPDIR, 'renovate');
-    logger.debug('Using baseDir: ' + config.baseDir);
-  }
-  await fs.ensureDir(config.baseDir);
-  if (config.cacheDir) {
-    logger.debug('Using configured cacheDir: ' + config.cacheDir);
-  } else {
-    config.cacheDir = path.join(config.baseDir, 'cache');
-    logger.debug('Using cacheDir: ' + config.cacheDir);
-  }
-  await fs.ensureDir(config.cacheDir);
-  cache.init(config.cacheDir);
-  return config;
-}
 
 export async function getRepositoryConfig(
   globalConfig: RenovateConfig,
@@ -58,43 +35,49 @@ function getGlobalConfig(): Promise<RenovateConfig> {
   return configParser.parseConfigs(process.env, process.argv);
 }
 
-export async function start(): Promise<0 | 1> {
-  try {
-    let config = await getGlobalConfig();
-    config = await initPlatform(config);
-    config = await setDirectories(config);
-    config = await autodiscoverRepositories(config);
+function haveReachedLimits(): boolean {
+  if (isLimitReached(Limit.Commits)) {
+    logger.info('Max commits created for this run.');
+    return true;
+  }
+  return false;
+}
 
-    limits.init(config);
-    setEmojiConfig(config);
+export async function start(): Promise<0 | 1> {
+  let config: RenovateConfig;
+  try {
+    // read global config from file, env and cli args
+    config = await getGlobalConfig();
+    // initialize all submodules
+    config = await globalInitialize(config);
+    // autodiscover repositories (needs to come after platform initialization)
+    config = await autodiscoverRepositories(config);
     // Iterate through repositories sequentially
     for (const repository of config.repositories) {
-      if (limits.getLimitRemaining('prCommitsPerRunLimit') <= 0) {
-        logger.debug(
-          'Max commits created for this run. Skipping all remaining repositories.'
-        );
+      if (haveReachedLimits()) {
         break;
       }
       const repoConfig = await getRepositoryConfig(config, repository);
       await setUtilConfig(repoConfig);
       if (repoConfig.hostRules) {
         hostRules.clear();
-        repoConfig.hostRules.forEach(rule => hostRules.add(rule));
+        repoConfig.hostRules.forEach((rule) => hostRules.add(rule));
         repoConfig.hostRules = [];
       }
       await repositoryWorker.renovateRepository(repoConfig);
+      setMeta({});
     }
-    setMeta({});
-    logger.debug(`Renovate exiting successfully`);
   } catch (err) /* istanbul ignore next */ {
     if (err.message.startsWith('Init: ')) {
       logger.fatal(err.message.substring(6));
     } else {
-      logger.fatal({ err }, `Fatal error: ${err.message}`);
+      logger.fatal({ err }, `Fatal error: ${String(err.message)}`);
     }
+  } finally {
+    globalFinalize(config);
+    logger.debug(`Renovate exiting`);
   }
-  const loggerErrors = getErrors();
-  /* istanbul ignore if */
+  const loggerErrors = getProblems().filter((p) => p.level >= ERROR);
   if (loggerErrors.length) {
     logger.info(
       { loggerErrors },

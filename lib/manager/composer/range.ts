@@ -1,6 +1,6 @@
 import { logger } from '../../logger';
+import { RangeStrategy } from '../../types';
 import { RangeConfig } from '../common';
-import { RangeStrategy } from '../../versioning';
 
 export function getRangeStrategy(config: RangeConfig): RangeStrategy {
   const {
@@ -11,7 +11,7 @@ export function getRangeStrategy(config: RangeConfig): RangeStrategy {
     rangeStrategy,
   } = config;
   const { composerJsonType } = managerData;
-  const isComplexRange = currentValue && currentValue.includes(' || ');
+  const isComplexRange = currentValue?.includes(' || ');
   if (rangeStrategy === 'bump' && isComplexRange) {
     logger.debug(
       { currentValue },

@@ -16,7 +16,7 @@ exports[`.updateArtifacts() catches write error 2`] = `Array []`;
 exports[`.updateArtifacts() dynamically selects Docker image tag 1`] = `
 Array [
   Object {
-    "cmd": "docker ps --filter label=renovate_child -aq | xargs --no-run-if-empty docker rm -f",
+    "cmd": "docker ps --filter label=renovate_child -aq",
     "options": Object {
       "encoding": "utf-8",
     },
@@ -28,17 +28,18 @@ Array [
     },
   },
   Object {
-    "cmd": "docker ps --filter name=renovate_cocoapods -aq | xargs --no-run-if-empty docker rm -f",
+    "cmd": "docker ps --filter name=renovate_cocoapods -aq",
     "options": Object {
       "encoding": "utf-8",
     },
   },
   Object {
-    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child --user=ubuntu -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -w \\"/tmp/github/some/repo\\" renovate/cocoapods:1.2.4 bash -l -c \\"pod install\\"",
+    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child --user=ubuntu -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -v \\"/tmp/cache\\":\\"/tmp/cache\\" -e CP_HOME_DIR -w \\"/tmp/github/some/repo\\" renovate/cocoapods:1.2.4 bash -l -c \\"pod install\\"",
     "options": Object {
       "cwd": "/tmp/github/some/repo",
       "encoding": "utf-8",
       "env": Object {
+        "CP_HOME_DIR": "/tmp/cache/others/cocoapods",
         "HOME": "/home/user",
         "HTTPS_PROXY": "https://example.com",
         "HTTP_PROXY": "http://example.com",
@@ -47,6 +48,7 @@ Array [
         "NO_PROXY": "localhost",
         "PATH": "/tmp/path",
       },
+      "maxBuffer": 10485760,
       "timeout": 900000,
     },
   },
@@ -56,7 +58,7 @@ Array [
 exports[`.updateArtifacts() falls back to the \`latest\` Docker image tag 1`] = `
 Array [
   Object {
-    "cmd": "docker ps --filter label=renovate_child -aq | xargs --no-run-if-empty docker rm -f",
+    "cmd": "docker ps --filter label=renovate_child -aq",
     "options": Object {
       "encoding": "utf-8",
     },
@@ -68,17 +70,18 @@ Array [
     },
   },
   Object {
-    "cmd": "docker ps --filter name=renovate_cocoapods -aq | xargs --no-run-if-empty docker rm -f",
+    "cmd": "docker ps --filter name=renovate_cocoapods -aq",
     "options": Object {
       "encoding": "utf-8",
     },
   },
   Object {
-    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child --user=ubuntu -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -w \\"/tmp/github/some/repo\\" renovate/cocoapods:latest bash -l -c \\"pod install\\"",
+    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child --user=ubuntu -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -v \\"/tmp/cache\\":\\"/tmp/cache\\" -e CP_HOME_DIR -w \\"/tmp/github/some/repo\\" renovate/cocoapods:latest bash -l -c \\"pod install\\"",
     "options": Object {
       "cwd": "/tmp/github/some/repo",
       "encoding": "utf-8",
       "env": Object {
+        "CP_HOME_DIR": "/tmp/cache/others/cocoapods",
         "HOME": "/home/user",
         "HTTPS_PROXY": "https://example.com",
         "HTTP_PROXY": "http://example.com",
@@ -87,6 +90,7 @@ Array [
         "NO_PROXY": "localhost",
         "PATH": "/tmp/path",
       },
+      "maxBuffer": 10485760,
       "timeout": 900000,
     },
   },
@@ -107,6 +111,7 @@ Array [
       "cwd": "/tmp/github/some/repo",
       "encoding": "utf-8",
       "env": Object {
+        "CP_HOME_DIR": "/tmp/cache/others/cocoapods",
         "HOME": "/home/user",
         "HTTPS_PROXY": "https://example.com",
         "HTTP_PROXY": "http://example.com",
@@ -115,6 +120,7 @@ Array [
         "NO_PROXY": "localhost",
         "PATH": "/tmp/path",
       },
+      "maxBuffer": 10485760,
       "timeout": 900000,
     },
   },
@@ -142,6 +148,7 @@ Array [
       "cwd": "/tmp/github/some/repo",
       "encoding": "utf-8",
       "env": Object {
+        "CP_HOME_DIR": "/tmp/cache/others/cocoapods",
         "HOME": "/home/user",
         "HTTPS_PROXY": "https://example.com",
         "HTTP_PROXY": "http://example.com",
@@ -150,6 +157,7 @@ Array [
         "NO_PROXY": "localhost",
         "PATH": "/tmp/path",
       },
+      "maxBuffer": 10485760,
       "timeout": 900000,
     },
   },
@@ -170,7 +178,7 @@ Array [
 exports[`.updateArtifacts() returns updated Podfile 2`] = `
 Array [
   Object {
-    "cmd": "docker ps --filter label=renovate_child -aq | xargs --no-run-if-empty docker rm -f",
+    "cmd": "docker ps --filter label=renovate_child -aq",
     "options": Object {
       "encoding": "utf-8",
     },
@@ -182,17 +190,18 @@ Array [
     },
   },
   Object {
-    "cmd": "docker ps --filter name=renovate_cocoapods -aq | xargs --no-run-if-empty docker rm -f",
+    "cmd": "docker ps --filter name=renovate_cocoapods -aq",
     "options": Object {
       "encoding": "utf-8",
     },
   },
   Object {
-    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -w \\"/tmp/github/some/repo\\" renovate/cocoapods bash -l -c \\"pod install\\"",
+    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -v \\"/tmp/cache\\":\\"/tmp/cache\\" -e CP_HOME_DIR -w \\"/tmp/github/some/repo\\" renovate/cocoapods bash -l -c \\"gem install cocoapods-acknowledgements && pod install\\"",
     "options": Object {
       "cwd": "/tmp/github/some/repo",
       "encoding": "utf-8",
       "env": Object {
+        "CP_HOME_DIR": "/tmp/cache/others/cocoapods",
         "HOME": "/home/user",
         "HTTPS_PROXY": "https://example.com",
         "HTTP_PROXY": "http://example.com",
@@ -201,6 +210,72 @@ Array [
         "NO_PROXY": "localhost",
         "PATH": "/tmp/path",
       },
+      "maxBuffer": 10485760,
+      "timeout": 900000,
+    },
+  },
+]
+`;
+
+exports[`.updateArtifacts() returns updated Podfile and Pods files 1`] = `
+Array [
+  Object {
+    "file": Object {
+      "contents": "New Podfile",
+      "name": "Podfile.lock",
+    },
+  },
+  Object {
+    "file": Object {
+      "contents": undefined,
+      "name": "Pods/Manifest.lock",
+    },
+  },
+  Object {
+    "file": Object {
+      "contents": undefined,
+      "name": "Pods/New",
+    },
+  },
+  Object {
+    "file": Object {
+      "contents": "Pods/Deleted",
+      "name": "|delete|",
+    },
+  },
+]
+`;
+
+exports[`.updateArtifacts() returns updated Podfile and Pods files 2`] = `
+Array [
+  Object {
+    "cmd": "docker ps --filter label=renovate_child -aq",
+    "options": Object {
+      "encoding": "utf-8",
+    },
+  },
+  Object {
+    "cmd": "docker ps --filter name=renovate_cocoapods -aq",
+    "options": Object {
+      "encoding": "utf-8",
+    },
+  },
+  Object {
+    "cmd": "docker run --rm --name=renovate_cocoapods --label=renovate_child -v \\"/tmp/github/some/repo\\":\\"/tmp/github/some/repo\\" -v \\"/tmp/cache\\":\\"/tmp/cache\\" -e CP_HOME_DIR -w \\"/tmp/github/some/repo\\" renovate/cocoapods bash -l -c \\"pod install\\"",
+    "options": Object {
+      "cwd": "/tmp/github/some/repo",
+      "encoding": "utf-8",
+      "env": Object {
+        "CP_HOME_DIR": "/tmp/cache/others/cocoapods",
+        "HOME": "/home/user",
+        "HTTPS_PROXY": "https://example.com",
+        "HTTP_PROXY": "http://example.com",
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US",
+        "NO_PROXY": "localhost",
+        "PATH": "/tmp/path",
+      },
+      "maxBuffer": 10485760,
       "timeout": 900000,
     },
   },

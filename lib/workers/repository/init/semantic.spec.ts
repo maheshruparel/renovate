@@ -1,5 +1,7 @@
+import { RenovateConfig, getConfig, git } from '../../../../test/util';
 import { detectSemanticCommits } from './semantic';
-import { platform, getConfig, RenovateConfig } from '../../../../test/util';
+
+jest.mock('../../../util/git');
 
 let config: RenovateConfig;
 beforeEach(() => {
@@ -11,25 +13,17 @@ beforeEach(() => {
 
 describe('workers/repository/init/semantic', () => {
   describe('detectSemanticCommits()', () => {
-    it('returns config if already set', async () => {
-      config.semanticCommits = true;
-      const res = await detectSemanticCommits(config);
-      expect(res).toBe(true);
-    });
     it('detects false if unknown', async () => {
       config.semanticCommits = null;
-      platform.getCommitMessages.mockResolvedValue(['foo', 'bar']);
-      const res = await detectSemanticCommits(config);
-      expect(res).toBe(false);
+      git.getCommitMessages.mockResolvedValue(['foo', 'bar']);
+      const res = await detectSemanticCommits();
+      expect(res).toBe('disabled');
     });
     it('detects true if known', async () => {
       config.semanticCommits = null;
-      platform.getCommitMessages.mockResolvedValue([
-        'fix: foo',
-        'refactor: bar',
-      ]);
-      const res = await detectSemanticCommits(config);
-      expect(res).toBe(true);
+      git.getCommitMessages.mockResolvedValue(['fix: foo', 'refactor: bar']);
+      const res = await detectSemanticCommits();
+      expect(res).toBe('enabled');
     });
   });
 });

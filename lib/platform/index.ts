@@ -1,21 +1,19 @@
-import fs from 'fs';
 import URL from 'url';
 import addrs from 'email-addresses';
-import * as hostRules from '../util/host-rules';
-import { logger } from '../logger';
-import { Platform } from './common';
 import { RenovateConfig } from '../config/common';
 import { PLATFORM_NOT_FOUND } from '../constants/error-messages';
+import { logger } from '../logger';
+import { setPrivateKey } from '../util/git';
+import * as hostRules from '../util/host-rules';
+import platforms from './api.generated';
+import { Platform } from './common';
 
 export * from './common';
 
-export const platformList = fs
-  .readdirSync(__dirname, { withFileTypes: true })
-  .filter(dirent => dirent.isDirectory())
-  .map(dirent => dirent.name)
-  .filter(name => name !== 'git' && name !== 'utils') // TODO: should be cleaner
-  .sort();
+export const getPlatformList = (): string[] => Array.from(platforms.keys());
+export const getPlatforms = (): Map<string, Platform> => platforms;
 
+// eslint-disable-next-line @typescript-eslint/naming-convention
 let _platform: Platform;
 
 const handler: ProxyHandler<Platform> = {
@@ -23,50 +21,87 @@ const handler: ProxyHandler<Platform> = {
     if (!_platform) {
       throw new Error(PLATFORM_NOT_FOUND);
     }
-
-    // TODO: add more validation
-
     return _platform[prop];
   },
 };
 
 export const platform = new Proxy<Platform>({} as any, handler);
 
-export async function setPlatformApi(name: string): Promise<void> {
-  if (!platformList.includes(name)) {
+export function setPlatformApi(name: string): void {
+  if (!platforms.has(name)) {
     throw new Error(
-      `Init: Platform "${name}" not found. Must be one of: ${platformList.join(
+      `Init: Platform "${name}" not found. Must be one of: ${getPlatformList().join(
         ', '
       )}`
     );
   }
-  _platform = await import('./' + name);
+  _platform = platforms.get(name);
+}
+
+interface GitAuthor {
+  name?: string;
+  address?: string;
+}
+
+export function parseGitAuthor(input: string): GitAuthor | null {
+  let result: GitAuthor = null;
+  if (!input) {
+    return null;
+  }
+  try {
+    result = addrs.parseOneAddress(input);
+    if (result) {
+      return result;
+    }
+    if (input.includes('[bot]@')) {
+      // invalid github app/bot addresses
+      const parsed = addrs.parseOneAddress(
+        input.replace('[bot]@', '@')
+      ) as addrs.ParsedMailbox;
+      if (parsed?.address) {
+        result = {
+          name: parsed.name || input.replace(/@.*/, ''),
+          address: parsed.address.replace('@', '[bot]@'),
+        };
+        return result;
+      }
+    }
+    if (input.includes('<') && input.includes('>')) {
+      // try wrapping the name part in quotations
+      result = addrs.parseOneAddress('"' + input.replace(/(\s?<)/, '"$1'));
+      if (result) {
+        return result;
+      }
+    }
+  } catch (err) /* istanbul ignore next */ {
+    logger.error({ err }, 'Unknown error parsing gitAuthor');
+  }
+  // give up
+  return null;
 }
 
 export async function initPlatform(
   config: RenovateConfig
 ): Promise<RenovateConfig> {
-  await setPlatformApi(config.platform);
+  setPrivateKey(config.gitPrivateKey);
+  setPlatformApi(config.platform);
   // TODO: types
   const platformInfo = await platform.initPlatform(config);
   const returnConfig: any = { ...config, ...platformInfo };
   let gitAuthor: string;
-  if (config && config.gitAuthor) {
+  if (config?.gitAuthor) {
     logger.debug(`Using configured gitAuthor (${config.gitAuthor})`);
     gitAuthor = config.gitAuthor;
-  } else if (!(platformInfo && platformInfo.gitAuthor)) {
-    logger.debug('Using default gitAuthor: Renovate Bot <bot@renovateapp.com>');
-    gitAuthor = 'Renovate Bot <bot@renovateapp.com>';
+  } else if (!platformInfo?.gitAuthor) {
+    logger.debug(
+      'Using default gitAuthor: Renovate Bot <renovate@whitesourcesoftware.com>'
+    );
+    gitAuthor = 'Renovate Bot <renovate@whitesourcesoftware.com>';
   } /* istanbul ignore next */ else {
-    logger.debug('Using platform gitAuthor: ' + platformInfo.gitAuthor);
+    logger.debug(`Using platform gitAuthor: ${String(platformInfo.gitAuthor)}`);
     gitAuthor = platformInfo.gitAuthor;
   }
-  let gitAuthorParsed: addrs.ParsedMailbox | null = null;
-  try {
-    gitAuthorParsed = addrs.parseOneAddress(gitAuthor) as addrs.ParsedMailbox;
-  } catch (err) /* istanbul ignore next */ {
-    logger.debug({ gitAuthor, err }, 'Error parsing gitAuthor');
-  }
+  const gitAuthorParsed = parseGitAuthor(gitAuthor);
   // istanbul ignore if
   if (!gitAuthorParsed) {
     throw new Error('Init: gitAuthor is not parsed as valid RFC5322 format');
@@ -80,7 +115,7 @@ export async function initPlatform(
     hostType: returnConfig.platform,
     hostName: URL.parse(returnConfig.endpoint).hostname,
   };
-  ['token', 'username', 'password'].forEach(field => {
+  ['token', 'username', 'password'].forEach((field) => {
     if (config[field]) {
       platformRule[field] = config[field];
       delete returnConfig[field];

@@ -1,11 +1,11 @@
+import { VersioningApi } from '../common';
 import maven from '../maven';
-import { TYPE_QUALIFIER, tokenize, isSubversion } from '../maven/compare';
+import { TYPE_QUALIFIER, isSubversion, tokenize } from '../maven/compare';
 import {
   REV_TYPE_LATEST,
   REV_TYPE_SUBREV,
   parseDynamicRevision,
 } from './parse';
-import { VersioningApi } from '../common';
 
 export const id = 'ivy';
 export const displayName = 'Ivy';
@@ -13,6 +13,7 @@ export const urls = ['https://ant.apache.org/ivy/'];
 export const supportsRanges = true;
 export const supportedRangeStrategies = ['bump', 'extend', 'pin', 'replace'];
 
+// eslint-disable-next-line @typescript-eslint/unbound-method
 const {
   equals,
   getMajor,

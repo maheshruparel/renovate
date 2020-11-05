@@ -1,6 +1,6 @@
 import {
-  exec as cpExec,
   ExecOptions as ChildProcessExecOptions,
+  exec as cpExec,
 } from 'child_process';
 import { promisify } from 'util';
 
@@ -14,6 +14,7 @@ export enum BinarySource {
 
 export interface ExecConfig {
   binarySource: Opt<BinarySource>;
+  dockerImagePrefix: Opt<string>;
   dockerUser: Opt<string>;
   localDir: Opt<string>;
   cacheDir: Opt<string>;

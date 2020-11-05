@@ -1,19 +1,23 @@
+import { SYSTEM_INSUFFICIENT_MEMORY } from '../../../constants/error-messages';
+import { getPkgReleases } from '../../../datasource';
+import { logger } from '../../../logger';
+import * as versioning from '../../../versioning';
+import { ensureTrailingSlash } from '../../url';
 import {
-  VolumeOption,
-  VolumesPair,
   DockerOptions,
   ExecConfig,
   Opt,
+  VolumeOption,
+  VolumesPair,
   rawExec,
 } from '../common';
-import { logger } from '../../../logger';
-import * as versioning from '../../../versioning';
-import { getPkgReleases } from '../../../datasource/docker';
 
 const prefetchedImages = new Set<string>();
 
 async function prefetchDockerImage(taggedImage: string): Promise<void> {
-  if (!prefetchedImages.has(taggedImage)) {
+  if (prefetchedImages.has(taggedImage)) {
+    logger.debug(`Docker image is already prefetched: ${taggedImage}`);
+  } else {
     logger.debug(`Fetching Docker image: ${taggedImage}`);
     prefetchedImages.add(taggedImage);
     await rawExec(`docker pull ${taggedImage}`, { encoding: 'utf-8' });
@@ -49,13 +53,13 @@ function uniq<T = unknown>(
   eql = (x: T, y: T): boolean => x === y
 ): T[] {
   return array.filter((x, idx, arr) => {
-    return arr.findIndex(y => eql(x, y)) === idx;
+    return arr.findIndex((y) => eql(x, y)) === idx;
   });
 }
 
 function prepareVolumes(volumes: VolumeOption[] = []): string[] {
   const expanded: (VolumesPair | null)[] = volumes.map(expandVolumeOption);
-  const filtered: VolumesPair[] = expanded.filter(vol => vol !== null);
+  const filtered: VolumesPair[] = expanded.filter((vol) => vol !== null);
   const unique: VolumesPair[] = uniq<VolumesPair>(filtered, volumesEql);
   return unique.map(([from, to]) => {
     return `-v "${from}":"${to}"`;
@@ -63,14 +67,16 @@ function prepareVolumes(volumes: VolumeOption[] = []): string[] {
 }
 
 function prepareCommands(commands: Opt<string>[]): string[] {
-  return commands.filter(command => command && typeof command === 'string');
+  return commands.filter((command) => command && typeof command === 'string');
 }
 
 async function getDockerTag(
-  lookupName: string,
+  depName: string,
   constraint: string,
   scheme: string
 ): Promise<string> {
+  // TODO: fixme
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const { isValid, isVersion, matches, sortVersions } = versioning.get(scheme);
 
   if (!isValid(constraint)) {
@@ -80,13 +86,13 @@ async function getDockerTag(
 
   logger.debug(
     { constraint },
-    `Found ${scheme} version constraint - checking for a compatible ${lookupName} image to use`
+    `Found ${scheme} version constraint - checking for a compatible ${depName} image to use`
   );
-  const imageReleases = await getPkgReleases({ lookupName });
-  if (imageReleases && imageReleases.releases) {
-    let versions = imageReleases.releases.map(release => release.version);
+  const imageReleases = await getPkgReleases({ datasource: 'docker', depName });
+  if (imageReleases?.releases) {
+    let versions = imageReleases.releases.map((release) => release.version);
     versions = versions.filter(
-      version => isVersion(version) && matches(version, constraint)
+      (version) => isVersion(version) && matches(version, constraint)
     );
     versions = versions.sort(sortVersions);
     if (versions.length) {
@@ -98,12 +104,12 @@ async function getDockerTag(
       return version;
     }
   } /* istanbul ignore next */ else {
-    logger.error(`No ${lookupName} releases found`);
+    logger.error(`No ${depName} releases found`);
     return 'latest';
   }
   logger.warn(
-    { constraint },
-    'Failed to find a tag satisfying ruby constraint, using latest ruby image instead'
+    { depName, constraint, scheme },
+    'Failed to find a tag satisfying constraint, using "latest" tag instead'
   );
   return 'latest';
 }
@@ -112,47 +118,61 @@ function getContainerName(image: string): string {
   return image.replace(/\//g, '_');
 }
 
-export async function removeDockerContainer(image): Promise<void> {
+export async function removeDockerContainer(image: string): Promise<void> {
   const containerName = getContainerName(image);
+  let cmd = `docker ps --filter name=${containerName} -aq`;
   try {
-    const res = await rawExec(
-      `docker ps --filter name=${containerName} -aq | xargs --no-run-if-empty docker rm -f`,
-      { encoding: 'utf-8' }
-    );
-    if (res?.stdout?.trim().length) {
-      const containerId = res.stdout.trim();
-      logger.info(
-        { image, containerName, containerId },
-        'Finished Docker container removal'
-      );
+    const res = await rawExec(cmd, {
+      encoding: 'utf-8',
+    });
+    const containerId = res?.stdout?.trim() || '';
+    // istanbul ignore if
+    if (containerId.length) {
+      logger.debug({ containerId }, 'Removing container');
+      cmd = `docker rm -f ${containerId}`;
+      await rawExec(cmd, {
+        encoding: 'utf-8',
+      });
     } else {
       logger.trace({ image, containerName }, 'No running containers to remove');
     }
   } catch (err) /* istanbul ignore next */ {
     logger.trace({ err }, 'removeDockerContainer err');
-    logger.info({ image, containerName }, 'Could not remove Docker container');
+    logger.info(
+      { image, containerName, cmd },
+      'Could not remove Docker container'
+    );
   }
 }
 
 // istanbul ignore next
 export async function removeDanglingContainers(): Promise<void> {
   try {
-    const res = await rawExec(
-      `docker ps --filter label=renovate_child -aq | xargs --no-run-if-empty docker rm -f`,
-      { encoding: 'utf-8' }
-    );
+    const res = await rawExec(`docker ps --filter label=renovate_child -aq`, {
+      encoding: 'utf-8',
+    });
     if (res?.stdout?.trim().length) {
       const containerIds = res.stdout
         .trim()
         .split('\n')
-        .map(container => container.trim())
+        .map((container) => container.trim())
         .filter(Boolean);
-      logger.debug({ containerIds }, 'Removed dangling child containers');
+      logger.debug({ containerIds }, 'Removing dangling child containers');
+      await rawExec(`docker rm -f ${containerIds.join(' ')}`, {
+        encoding: 'utf-8',
+      });
     } else {
-      logger.trace('No dangling containers to remove');
+      logger.debug('No dangling containers to remove');
     }
-  } catch (err) {
-    logger.warn({ err }, 'Error removing dangling containers');
+  } catch (err) /* istanbul ignore next */ {
+    if (err.errno === 'ENOMEM') {
+      throw new Error(SYSTEM_INSUFFICIENT_MEMORY);
+    }
+    if (err.stderr?.includes('Cannot connect to the Docker daemon')) {
+      logger.info('No docker daemon found');
+    } else {
+      logger.warn({ err }, 'Error removing dangling containers');
+    }
   }
 }
 
@@ -161,7 +181,8 @@ export async function generateDockerCommand(
   options: DockerOptions,
   config: ExecConfig
 ): Promise<string> {
-  const { image, envVars, cwd, tagScheme, tagConstraint } = options;
+  const { envVars, cwd, tagScheme, tagConstraint } = options;
+  let image = options.image;
   const volumes = options.volumes || [];
   const preCommands = options.preCommands || [];
   const postCommands = options.postCommands || [];
@@ -180,8 +201,8 @@ export async function generateDockerCommand(
   if (envVars) {
     result.push(
       ...uniq(envVars)
-        .filter(x => typeof x === 'string')
-        .map(e => `-e ${e}`)
+        .filter((x) => typeof x === 'string')
+        .map((e) => `-e ${e}`)
     );
   }
 
@@ -189,11 +210,25 @@ export async function generateDockerCommand(
     result.push(`-w "${cwd}"`);
   }
 
-  let tag;
+  if (config.dockerImagePrefix) {
+    image = image.replace(
+      /^renovate\//,
+      ensureTrailingSlash(config.dockerImagePrefix)
+    );
+  }
+
+  let tag: string;
   if (options.tag) {
     tag = options.tag;
   } else if (tagConstraint) {
-    tag = await getDockerTag(image, tagConstraint, tagScheme || 'semver');
+    const tagVersioning = tagScheme || 'semver';
+    tag = await getDockerTag(image, tagConstraint, tagVersioning);
+    logger.debug(
+      { image, tagConstraint, tagVersioning, tag },
+      'Resolved tag constraint'
+    );
+  } else {
+    logger.debug({ image }, 'No tag or tagConstraint specified');
   }
 
   const taggedImage = tag ? `${image}:${tag}` : `${image}`;

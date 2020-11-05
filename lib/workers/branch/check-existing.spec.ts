@@ -1,7 +1,7 @@
-import { PR_STATE_CLOSED } from '../../constants/pull-requests';
-import { prAlreadyExisted } from './check-existing';
-import { defaultConfig, platform, partial } from '../../../test/util';
+import { defaultConfig, partial, platform } from '../../../test/util';
+import { PrState } from '../../types';
 import { BranchConfig } from '../common';
+import { prAlreadyExisted } from './check-existing';
 
 describe('workers/branch/check-existing', () => {
   describe('prAlreadyExisted', () => {
@@ -28,7 +28,7 @@ describe('workers/branch/check-existing', () => {
       platform.findPr.mockResolvedValueOnce({ number: 12 } as never);
       platform.getPr.mockResolvedValueOnce({
         number: 12,
-        state: PR_STATE_CLOSED,
+        state: PrState.Closed,
       } as never);
       expect(await prAlreadyExisted(config)).toEqual({ number: 12 });
       expect(platform.findPr).toHaveBeenCalledTimes(1);

@@ -1,7 +1,7 @@
 import { RenovateConfig, getConfig } from '../../../../test/util';
 
-import { flattenUpdates } from './flatten';
 import { LANGUAGE_DOCKER } from '../../../constants/languages';
+import { flattenUpdates } from './flatten';
 
 let config: RenovateConfig;
 beforeEach(() => {
@@ -13,7 +13,7 @@ beforeEach(() => {
 
 describe('workers/repository/updates/flatten', () => {
   describe('flattenUpdates()', () => {
-    it('flattens', () => {
+    it('flattens', async () => {
       config.lockFileMaintenance.enabled = true;
       config.packageRules = [
         {
@@ -66,16 +66,16 @@ describe('workers/repository/updates/flatten', () => {
               {
                 depName: 'calico/node',
                 language: LANGUAGE_DOCKER,
-                updates: [{ newValue: '3.2.0' }],
+                updates: [{ newValue: '3.2.0', updateType: 'minor' }],
               },
             ],
           },
         ],
       };
-      const res = flattenUpdates(config, packageFiles);
+      const res = await flattenUpdates(config, packageFiles);
       expect(res).toHaveLength(9);
       expect(
-        res.filter(r => r.updateType === 'lockFileMaintenance')
+        res.filter((r) => r.updateType === 'lockFileMaintenance')
       ).toHaveLength(2);
     });
   });

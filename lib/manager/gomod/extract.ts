@@ -1,8 +1,9 @@
+import { validRange } from 'semver';
+import * as datasourceGo from '../../datasource/go';
 import { logger } from '../../logger';
+import { SkipReason } from '../../types';
 import { isVersion } from '../../versioning/semver';
 import { PackageDependency, PackageFile } from '../common';
-import * as datasourceGo from '../../datasource/go';
-import { SkipReason } from '../../types';
 
 function getDep(
   lineNumber: number,
@@ -43,11 +44,15 @@ function getDep(
 
 export function extractPackageFile(content: string): PackageFile | null {
   logger.trace({ content }, 'gomod.extractPackageFile()');
+  const constraints: Record<string, any> = {};
   const deps: PackageDependency[] = [];
   try {
     const lines = content.split('\n');
     for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
       let line = lines[lineNumber];
+      if (line.startsWith('go ') && validRange(line.replace('go ', ''))) {
+        constraints.go = line.replace('go ', '');
+      }
       const replaceMatch = /^replace\s+[^\s]+[\s]+[=][>]\s+([^\s]+)\s+([^\s]+)/.exec(
         line
       );
@@ -85,5 +90,5 @@ export function extractPackageFile(content: string): PackageFile | null {
   if (!deps.length) {
     return null;
   }
-  return { deps };
+  return { constraints, deps };
 }

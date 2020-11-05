@@ -1,24 +1,29 @@
 import is from '@sindresorhus/is';
 import {
+  PackageRule,
+  RenovateConfig,
+  filterConfig,
   getManagerConfig,
   mergeChildConfig,
-  filterConfig,
-  RenovateConfig,
-  PackageRule,
 } from '../../../config';
-import { applyPackageRules } from '../../../util/package-rules';
-import { get } from '../../../manager';
 import { LANGUAGE_DOCKER } from '../../../constants/languages';
+import { getDefaultConfig } from '../../../datasource';
+import { get } from '../../../manager';
+import { applyPackageRules } from '../../../util/package-rules';
+import { generateBranchName } from './branch-name';
 
 // Return only rules that contain an updateType
 function getUpdateTypeRules(packageRules: PackageRule[]): PackageRule[] {
-  return packageRules.filter(rule => is.nonEmptyArray(rule.updateTypes));
+  return packageRules.filter((rule) => is.nonEmptyArray(rule.updateTypes));
 }
 
-export function flattenUpdates(
+const upper = (str: string): string =>
+  str.charAt(0).toUpperCase() + str.substr(1);
+
+export async function flattenUpdates(
   config: RenovateConfig,
   packageFiles: Record<string, any[]>
-): RenovateConfig[] {
+): Promise<RenovateConfig[]> {
   const updates = [];
   const updateTypes = [
     'major',
@@ -32,6 +37,17 @@ export function flattenUpdates(
     const managerConfig = getManagerConfig(config, manager);
     for (const packageFile of files) {
       const packageFileConfig = mergeChildConfig(managerConfig, packageFile);
+      const packagePath = packageFile.packageFile?.split('/');
+      if (packagePath.length > 0) {
+        packagePath.splice(-1, 1);
+      }
+      if (packagePath.length > 0) {
+        packageFileConfig.parentDir = packagePath[packagePath.length - 1];
+        packageFileConfig.baseDir = packagePath.join('/');
+      } else {
+        packageFileConfig.parentDir = '';
+        packageFileConfig.baseDir = '';
+      }
       for (const dep of packageFile.deps) {
         if (dep.updates.length) {
           const depConfig = mergeChildConfig(packageFileConfig, dep);
@@ -39,6 +55,23 @@ export function flattenUpdates(
           for (const update of dep.updates) {
             let updateConfig = mergeChildConfig(depConfig, update);
             delete updateConfig.updates;
+            // Massage legacy vars just in case
+            updateConfig.currentVersion = updateConfig.currentValue;
+            updateConfig.newVersion =
+              updateConfig.newVersion || updateConfig.newValue;
+            if (updateConfig.updateType) {
+              updateConfig[`is${upper(updateConfig.updateType)}`] = true;
+            }
+            if (updateConfig.updateTypes) {
+              updateConfig.updateTypes.forEach((updateType) => {
+                updateConfig[`is${upper(updateType)}`] = true;
+              });
+            }
+            // apply config from datasource
+            const datasourceConfig = await getDefaultConfig(
+              depConfig.datasource
+            );
+            updateConfig = mergeChildConfig(updateConfig, datasourceConfig);
             updateConfig = applyPackageRules(updateConfig);
             // Keep only rules that haven't been applied yet (with updateTypes)
             updateConfig.packageRules = getUpdateTypeRules(
@@ -68,9 +101,11 @@ export function flattenUpdates(
               updateConfig.depName.match(/(^|\/)node$/) &&
               updateConfig.depName !== 'calico/node'
             ) {
-              updateConfig.managerBranchPrefix = '';
+              updateConfig.additionalBranchPrefix = '';
               updateConfig.depNameSanitized = 'node';
             }
+            generateBranchName(updateConfig);
+            update.branchName = updateConfig.branchName; // for writing to cache
             delete updateConfig.repoIsOnboarded;
             delete updateConfig.renovateJsonPresent;
             updateConfig.baseDeps = packageFile.deps;
@@ -101,11 +136,12 @@ export function flattenUpdates(
         }
         delete lockFileConfig.packageRules;
         delete lockFileConfig.deps;
+        generateBranchName(lockFileConfig);
         updates.push(lockFileConfig);
       }
     }
   }
   return updates
-    .filter(update => update.enabled)
-    .map(update => filterConfig(update, 'branch'));
+    .filter((update) => update.enabled)
+    .map((update) => filterConfig(update, 'branch'));
 }

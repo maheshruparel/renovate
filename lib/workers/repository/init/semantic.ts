@@ -1,31 +1,19 @@
 import conventionalCommitsDetector from 'conventional-commits-detector';
 import { logger } from '../../../logger';
-import { platform } from '../../../platform';
-import { RenovateConfig } from '../../../config';
+import { getCommitMessages } from '../../../util/git';
 
-export async function detectSemanticCommits(
-  config: RenovateConfig
-): Promise<boolean> {
+type DetectedSemanticCommit = 'enabled' | 'disabled';
+
+export async function detectSemanticCommits(): Promise<DetectedSemanticCommit> {
   logger.debug('detectSemanticCommits()');
-  logger.trace({ config });
-  if (config.semanticCommits !== null) {
-    logger.debug(
-      { semanticCommits: config.semanticCommits },
-      `semanticCommits already defined`
-    );
-    return config.semanticCommits;
-  }
-  const commitMessages = await platform.getCommitMessages();
-  if (commitMessages) {
-    commitMessages.length = 10;
-  }
+  const commitMessages = await getCommitMessages();
   logger.trace(`commitMessages=${JSON.stringify(commitMessages)}`);
   const type = conventionalCommitsDetector(commitMessages);
   logger.debug('Semantic commits detection: ' + type);
   if (type === 'angular') {
     logger.debug('angular semantic commits detected');
-    return true;
+    return 'enabled';
   }
   logger.debug('No semantic commits detected');
-  return false;
+  return 'disabled';
 }

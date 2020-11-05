@@ -1,6 +1,48 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`datasource/go getPkgReleases processes real data 1`] = `
+exports[`datasource/go getDigest returns digest 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/x/text?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getDigest returns null for no go-source tag 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/y/text?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getDigest returns null for wrong name 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/y/text?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases processes real data 1`] = `
 Object {
   "releases": Array [
     Object {
@@ -13,7 +55,145 @@ Object {
 }
 `;
 
-exports[`datasource/go getPkgReleases works for known servers 1`] = `
+exports[`datasource/go getReleases processes real data 2`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/x/text?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases returns null for 404 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/foo/something?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases returns null for empty result 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/foo/something?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases returns null for unknown error 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/foo/something?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases skips unsupported platform 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/x/text?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases skips wrong package 1`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/x/sys?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases support gitlab 1`] = `
+Object {
+  "releases": Array [
+    Object {
+      "version": "v1.0.0",
+    },
+    Object {
+      "version": "v2.0.0",
+    },
+  ],
+}
+`;
+
+exports[`datasource/go getReleases support gitlab 2`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "golang.org",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://golang.org/x/text?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases support ghe 1`] = `
+Object {
+  "releases": Array [
+    Object {
+      "version": "v1.0.0",
+    },
+    Object {
+      "version": "v2.0.0",
+    },
+  ],
+}
+`;
+
+exports[`datasource/go getReleases support ghe 2`] = `
+Array [
+  Object {
+    "headers": Object {
+      "accept-encoding": "gzip, deflate",
+      "host": "git.enterprise.com",
+      "user-agent": "https://github.com/renovatebot/renovate",
+    },
+    "method": "GET",
+    "url": "https://git.enterprise.com/example/module?go-get=1",
+  },
+]
+`;
+
+exports[`datasource/go getReleases works for known servers 1`] = `
 Array [
   Array [
     Object {
@@ -31,6 +211,23 @@ Array [
     Object {
       "datasource": "github-tags",
       "lookupName": "go-x/x",
+    },
+  ],
+]
+`;
+
+exports[`datasource/go getReleases works for nested modules on github 1`] = `
+Array [
+  Array [
+    Object {
+      "datasource": "github-tags",
+      "lookupName": "x/text",
+    },
+  ],
+  Array [
+    Object {
+      "datasource": "github-tags",
+      "lookupName": "x/text",
     },
   ],
 ]

@@ -1,11 +1,21 @@
-import { hrtime } from 'process';
-import got from '../../util/got';
 import { logger } from '../../logger';
-import { DatasourceError, ReleaseResult } from '../common';
+import { ExternalHostError } from '../../types/errors/external-host-error';
+import { Http } from '../../util/http';
+import { ReleaseResult } from '../common';
+import { id } from './common';
+
+const http = new Http(id);
 
 let lastSync = new Date('2000-01-01');
 let packageReleases: Record<string, string[]> = Object.create(null); // Because we might need a "constructor" key
 let contentLength = 0;
+
+// Note: use only for tests
+export function resetCache(): void {
+  lastSync = new Date('2000-01-01');
+  packageReleases = Object.create(null);
+  contentLength = 0;
+}
 
 /* https://bugs.chromium.org/p/v8/issues/detail?id=2869 */
 const copystr = (x: string): string => (' ' + x).slice(1);
@@ -21,16 +31,15 @@ async function updateRubyGemsVersions(): Promise<void> {
   let newLines: string;
   try {
     logger.debug('Rubygems: Fetching rubygems.org versions');
-    const startTime = hrtime();
-    newLines = (await got(url, options)).body;
-    const duration = hrtime(startTime);
-    const seconds = Math.round(duration[0] + duration[1] / 1e9);
-    logger.debug({ seconds }, 'Rubygems: Fetched rubygems.org versions');
+    const startTime = Date.now();
+    newLines = (await http.get(url, options)).body;
+    const durationMs = Math.round(Date.now() - startTime);
+    logger.debug({ durationMs }, 'Rubygems: Fetched rubygems.org versions');
   } catch (err) /* istanbul ignore next */ {
     if (err.statusCode !== 416) {
       contentLength = 0;
       packageReleases = Object.create(null); // Because we might need a "constructor" key
-      throw new DatasourceError(
+      throw new ExternalHostError(
         new Error('Rubygems fetch error - need to reset cache')
       );
     }
@@ -52,13 +61,13 @@ async function updateRubyGemsVersions(): Promise<void> {
       [pkg, versions] = split;
       pkg = copystr(pkg);
       packageReleases[pkg] = packageReleases[pkg] || [];
-      const lineVersions = versions.split(',').map(version => version.trim());
+      const lineVersions = versions.split(',').map((version) => version.trim());
       for (const lineVersion of lineVersions) {
         if (lineVersion.startsWith('-')) {
           const deletedVersion = lineVersion.slice(1);
           logger.trace({ pkg, deletedVersion }, 'Rubygems: Deleting version');
           packageReleases[pkg] = packageReleases[pkg].filter(
-            version => version !== deletedVersion
+            (version) => version !== deletedVersion
           );
         } else {
           packageReleases[pkg].push(copystr(lineVersion));
@@ -85,13 +94,15 @@ function isDataStale(): boolean {
   return minutesElapsed >= 5;
 }
 
+let updateRubyGemsVersionsPromise: Promise<void> | undefined;
+
 async function syncVersions(): Promise<void> {
   if (isDataStale()) {
-    global.updateRubyGemsVersions =
+    updateRubyGemsVersionsPromise =
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      global.updateRubyGemsVersions || updateRubyGemsVersions();
-    await global.updateRubyGemsVersions;
-    delete global.updateRubyGemsVersions;
+      updateRubyGemsVersionsPromise || updateRubyGemsVersions();
+    await updateRubyGemsVersionsPromise;
+    updateRubyGemsVersionsPromise = null;
   }
 }
 
@@ -105,7 +116,7 @@ export async function getRubygemsOrgDependency(
   }
   const dep: ReleaseResult = {
     name: lookupName,
-    releases: packageReleases[lookupName].map(version => ({ version })),
+    releases: packageReleases[lookupName].map((version) => ({ version })),
   };
   return dep;
 }

@@ -1,5 +1,5 @@
+import { NewValueConfig, VersioningApi } from '../common';
 import { api as npm } from '../npm';
-import { VersioningApi, NewValueConfig } from '../common';
 
 export const id = 'hex';
 export const displayName = 'Hex';
@@ -13,14 +13,15 @@ function hex2npm(input: string): string {
     .replace(/~>\s*(\d+\.\d+\.\d+)/, '~$1')
     .replace(/==|and/, '')
     .replace('or', '||')
-    .replace(/!=\s*(\d+\.\d+(\.\d+.*)?)/, '>$1 <$1');
+    .replace(/!=\s*(\d+\.\d+(\.\d+.*)?)/, '>$1 <$1')
+    .trim();
 }
 
 function npm2hex(input: string): string {
   const res = input
     .split(' ')
-    .map(str => str.trim())
-    .filter(str => str !== '');
+    .map((str) => str.trim())
+    .filter((str) => str !== '');
   let output = '';
   const operators = ['^', '=', '>', '<', '<=', '>=', '~'];
   for (let i = 0; i < res.length; i += 1) {
@@ -71,12 +72,14 @@ const getNewValue = ({
   if (/~>\s*(\d+\.\d+)$/.test(currentValue)) {
     newSemver = newSemver.replace(
       /\^\s*(\d+\.\d+(\.\d)?)/,
-      (_str, p1) => '~> ' + p1.slice(0, -2)
+      (_str, p1: string) => `~> ${p1.slice(0, -2)}`
     );
   } else {
     newSemver = newSemver.replace(/~\s*(\d+\.\d+\.\d)/, '~> $1');
   }
-
+  if (npm.isVersion(newSemver)) {
+    newSemver = `== ${newSemver}`;
+  }
   return newSemver;
 };
 

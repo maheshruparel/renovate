@@ -1,12 +1,15 @@
 import { safeLoad } from 'js-yaml';
-import { PackageFile, PackageDependency } from '../common';
-import { logger } from '../../logger';
 import * as datasourceDocker from '../../datasource/docker';
 import * as datasourceGitTags from '../../datasource/git-tags';
+import * as datasourceGitHubTags from '../../datasource/github-tags';
+import { logger } from '../../logger';
+import * as dockerVersioning from '../../versioning/docker';
+import { PackageDependency, PackageFile } from '../common';
 
 interface Image {
   name: string;
   newTag: string;
+  newName?: string;
 }
 
 interface Kustomize {
@@ -15,42 +18,40 @@ interface Kustomize {
   images: Image[];
 }
 
-// extract the version from the url
-const versionMatch = /(?<basename>.*)\?ref=(?<version>.*)\s*$/;
-
-// extract the url from the base of a url with a subdir
-const extractUrl = /^(?<url>.*)(?:\/\/.*)$/;
+// URL specifications should follow the hashicorp URL format
+// https://github.com/hashicorp/go-getter#url-format
+const gitUrl = /^(?:git::)?(?<url>(?:(?:(?:http|https|ssh):\/\/)?(?:.*@)?)?(?<path>(?:[^:/]+[:/])?(?<project>[^/]+\/[^/]+)))(?<subdir>[^?]*)\?ref=(?<currentValue>.+)$/;
 
 export function extractBase(base: string): PackageDependency | null {
-  const basenameVersion = versionMatch.exec(base);
-  if (basenameVersion) {
-    const currentValue = basenameVersion.groups.version;
-    const root = basenameVersion.groups.basename;
+  const match = gitUrl.exec(base);
 
-    const urlResult = extractUrl.exec(root);
-    let url = root;
-    // if a match, then there was a subdir, update
-    if (urlResult && !url.startsWith('http')) {
-      url = urlResult.groups.url;
-    }
+  if (!match) {
+    return null;
+  }
 
+  if (match?.groups.path.startsWith('github.com')) {
     return {
-      datasource: datasourceGitTags.id,
-      depName: root,
-      lookupName: url,
-      currentValue,
+      currentValue: match.groups.currentValue,
+      datasource: datasourceGitHubTags.id,
+      depName: match.groups.project.replace('.git', ''),
     };
   }
 
-  return null;
+  return {
+    datasource: datasourceGitTags.id,
+    depName: match.groups.path.replace('.git', ''),
+    depNameShort: match.groups.project.replace('.git', ''),
+    lookupName: match.groups.url,
+    currentValue: match.groups.currentValue,
+  };
 }
 
 export function extractImage(image: Image): PackageDependency | null {
-  if (image && image.name && image.newTag) {
+  if (image?.name && image.newTag) {
     return {
       datasource: datasourceDocker.id,
-      depName: image.name,
-      lookupName: image.name,
+      versioning: dockerVersioning.id,
+      depName: image.newName ?? image.name,
       currentValue: image.newTag,
     };
   }
@@ -61,7 +62,7 @@ export function extractImage(image: Image): PackageDependency | null {
 export function parseKustomize(content: string): Kustomize | null {
   let pkg = null;
   try {
-    pkg = safeLoad(content);
+    pkg = safeLoad(content, { json: true });
   } catch (e) /* istanbul ignore next */ {
     return null;
   }
@@ -74,7 +75,7 @@ export function parseKustomize(content: string): Kustomize | null {
     return null;
   }
 
-  pkg.bases = pkg.bases || [];
+  pkg.bases = (pkg.bases || []).concat(pkg.resources || []);
   pkg.images = pkg.images || [];
 
   return pkg;

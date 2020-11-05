@@ -1,10 +1,12 @@
-import { parse } from 'toml';
-import { isValid } from '../../versioning/poetry';
-import { logger } from '../../logger';
-import { PackageFile, PackageDependency } from '../common';
-import { PoetryFile, PoetrySection } from './types';
+import { parse } from '@iarna/toml';
+import is from '@sindresorhus/is';
 import * as datasourcePypi from '../../datasource/pypi';
+import { logger } from '../../logger';
 import { SkipReason } from '../../types';
+import * as pep440Versioning from '../../versioning/pep440';
+import * as poetryVersioning from '../../versioning/poetry';
+import { PackageDependency, PackageFile } from '../common';
+import { PoetryFile, PoetrySection } from './types';
 
 function extractFromSection(
   parsedFile: PoetryFile,
@@ -15,7 +17,10 @@ function extractFromSection(
   if (!sectionContent) {
     return [];
   }
-  Object.keys(sectionContent).forEach(depName => {
+  Object.keys(sectionContent).forEach((depName) => {
+    if (depName === 'python') {
+      return;
+    }
     let skipReason: SkipReason;
     let currentValue = sectionContent[depName];
     let nestedVersion = false;
@@ -52,7 +57,11 @@ function extractFromSection(
     };
     if (skipReason) {
       dep.skipReason = skipReason;
-    } else if (!isValid(dep.currentValue)) {
+    } else if (pep440Versioning.isValid(dep.currentValue)) {
+      dep.versioning = pep440Versioning.id;
+    } else if (poetryVersioning.isValid(dep.currentValue)) {
+      dep.versioning = poetryVersioning.id;
+    } else {
       dep.skipReason = SkipReason.UnknownVersion;
     }
     deps.push(dep);
@@ -61,10 +70,7 @@ function extractFromSection(
 }
 
 function extractRegistries(pyprojectfile: PoetryFile): string[] {
-  const sources =
-    pyprojectfile.tool &&
-    pyprojectfile.tool.poetry &&
-    pyprojectfile.tool.poetry.source;
+  const sources = pyprojectfile.tool?.poetry?.source;
 
   if (!Array.isArray(sources) || sources.length === 0) {
     return null;
@@ -93,7 +99,7 @@ export function extractPackageFile(
     logger.debug({ err }, 'Error parsing pyproject.toml file');
     return null;
   }
-  if (!(pyprojectfile.tool && pyprojectfile.tool.poetry)) {
+  if (!pyprojectfile.tool?.poetry) {
     logger.debug(`${fileName} contains no poetry section`);
     return null;
   }
@@ -106,5 +112,22 @@ export function extractPackageFile(
     return null;
   }
 
-  return { deps, registryUrls: extractRegistries(pyprojectfile) };
+  const constraints: Record<string, any> = {};
+
+  // https://python-poetry.org/docs/pyproject/#poetry-and-pep-517
+  if (
+    pyprojectfile['build-system']?.['build-backend'] === 'poetry.masonry.api'
+  ) {
+    constraints.poetry = pyprojectfile['build-system']?.requires.join(' ');
+  }
+
+  if (is.nonEmptyString(pyprojectfile.tool?.poetry?.dependencies?.python)) {
+    constraints.python = pyprojectfile.tool?.poetry?.dependencies?.python;
+  }
+
+  return {
+    deps,
+    registryUrls: extractRegistries(pyprojectfile),
+    constraints,
+  };
 }

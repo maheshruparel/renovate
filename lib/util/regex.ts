@@ -1,7 +1,7 @@
-import { logger } from '../logger';
 import { CONFIG_VALIDATION } from '../constants/error-messages';
+import { logger } from '../logger';
 
-let RegEx;
+let RegEx: RegExpConstructor;
 
 try {
   // eslint-disable-next-line
@@ -21,7 +21,11 @@ export function regEx(pattern: string, flags?: string): RegExp {
   } catch (err) {
     const error = new Error(CONFIG_VALIDATION);
     error.configFile = pattern;
-    error.validationError = 'Invalid regular expression: ' + err.toString();
+    error.validationError = `Invalid regular expression: ${pattern}`;
     throw error;
   }
+}
+
+export function escapeRegExp(input: string): string {
+  return input.replace(/[.*+\-?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }

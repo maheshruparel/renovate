@@ -1,9 +1,9 @@
-import * as env from './env';
-import { RenovateOptions } from './definitions';
 import {
   PLATFORM_TYPE_BITBUCKET,
   PLATFORM_TYPE_GITLAB,
 } from '../constants/platforms';
+import { RenovateOptions } from './definitions';
+import * as env from './env';
 
 describe('config/env', () => {
   describe('.getConfig(env)', () => {
@@ -56,6 +56,13 @@ describe('config/env', () => {
     it('supports GitHub custom endpoint and github.com', () => {
       const envParam: NodeJS.ProcessEnv = {
         GITHUB_COM_TOKEN: 'a github.com token',
+        RENOVATE_ENDPOINT: 'a ghe endpoint',
+        RENOVATE_TOKEN: 'a ghe token',
+      };
+      expect(env.getConfig(envParam)).toMatchSnapshot();
+    });
+    it('supports GitHub custom endpoint and gitlab.com', () => {
+      const envParam: NodeJS.ProcessEnv = {
         RENOVATE_ENDPOINT: 'a ghe endpoint',
         RENOVATE_TOKEN: 'a ghe token',
       };

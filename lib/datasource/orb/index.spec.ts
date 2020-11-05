@@ -1,9 +1,6 @@
-import _got from '../../util/got';
-import * as datasource from '.';
-
-jest.mock('../../util/got');
-
-const got: any = _got;
+import { getPkgReleases } from '..';
+import * as httpMock from '../../../test/httpMock';
+import { id as datasource } from '.';
 
 const orbData = {
   data: {
@@ -26,71 +23,82 @@ const orbData = {
   },
 };
 
+const baseUrl = 'https://circleci.com';
+
 describe('datasource/orb', () => {
-  describe('getPkgReleases', () => {
+  describe('getReleases', () => {
     beforeEach(() => {
       jest.clearAllMocks();
-      global.repoCache = {};
-      return global.renovateCache.rmAll();
+      httpMock.setup();
     });
+
+    afterEach(() => {
+      httpMock.reset();
+    });
+
     it('returns null for empty result', async () => {
-      got.post.mockReturnValueOnce({ body: {} });
+      httpMock.scope(baseUrl).post('/graphql-unstable').reply(200, {});
       expect(
-        await datasource.getPkgReleases({
-          lookupName: 'hyper-expanse/library-release-workflows',
+        await getPkgReleases({
+          datasource,
+          depName: 'hyper-expanse/library-release-workflows',
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for missing orb', async () => {
-      got.post.mockReturnValueOnce({ body: { data: {} } });
+      httpMock
+        .scope(baseUrl)
+        .post('/graphql-unstable')
+        .reply(200, { data: {} });
       expect(
-        await datasource.getPkgReleases({
-          lookupName: 'hyper-expanse/library-release-wonkflows',
+        await getPkgReleases({
+          datasource,
+          depName: 'hyper-expanse/library-release-wonkflows',
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for 404', async () => {
-      got.mockImplementationOnce(() =>
-        Promise.reject({
-          statusCode: 404,
-        })
-      );
+      httpMock.scope(baseUrl).post('/graphql-unstable').reply(404);
       expect(
-        await datasource.getPkgReleases({
-          lookupName: 'hyper-expanse/library-release-workflows',
+        await getPkgReleases({
+          datasource,
+          depName: 'hyper-expanse/library-release-workflows',
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('returns null for unknown error', async () => {
-      got.mockImplementationOnce(() => {
-        throw new Error();
-      });
+      httpMock.scope(baseUrl).post('/graphql-unstable').replyWithError('');
       expect(
-        await datasource.getPkgReleases({
-          lookupName: 'hyper-expanse/library-release-workflows',
+        await getPkgReleases({
+          datasource,
+          depName: 'hyper-expanse/library-release-workflows',
         })
       ).toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('processes real data', async () => {
-      got.post.mockReturnValueOnce({
-        body: orbData,
-      });
-      const res = await datasource.getPkgReleases({
-        lookupName: 'hyper-expanse/library-release-workflows',
+      httpMock.scope(baseUrl).post('/graphql-unstable').reply(200, orbData);
+      const res = await getPkgReleases({
+        datasource,
+        depName: 'hyper-expanse/library-release-workflows',
       });
       expect(res).toMatchSnapshot();
       expect(res).not.toBeNull();
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
     it('processes homeUrl', async () => {
       orbData.data.orb.homeUrl = 'https://google.com';
-      got.post.mockReturnValueOnce({
-        body: orbData,
-      });
-      const res = await datasource.getPkgReleases({
-        lookupName: 'hyper-expanse/library-release-workflows',
+      httpMock.scope(baseUrl).post('/graphql-unstable').reply(200, orbData);
+      const res = await getPkgReleases({
+        datasource,
+        depName: 'hyper-expanse/library-release-workflows',
       });
       expect(res).toMatchSnapshot();
       expect(res.homepage).toEqual('https://google.com');
+      expect(httpMock.getTrace()).toMatchSnapshot();
     });
   });
 });

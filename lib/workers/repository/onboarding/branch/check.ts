@@ -1,13 +1,15 @@
+import { RenovateConfig } from '../../../../config';
+import { configFileNames } from '../../../../config/app-strings';
+import { REPOSITORY_DISABLED } from '../../../../constants/error-messages';
 import { logger } from '../../../../logger';
 import { platform } from '../../../../platform';
-import { configFileNames } from '../../../../config/app-strings';
-import { RenovateConfig } from '../../../../config';
-import { REPOSITORY_DISABLED } from '../../../../constants/error-messages';
-import { PR_STATE_NOT_OPEN } from '../../../../constants/pull-requests';
+import { PrState } from '../../../../types';
+import { readLocalFile } from '../../../../util/fs';
+import { getFileList } from '../../../../util/git';
 
 const findFile = async (fileName: string): Promise<boolean> => {
   logger.debug(`findFile(${fileName})`);
-  const fileList = await platform.getFileList();
+  const fileList = await getFileList();
   return fileList.includes(fileName);
 };
 
@@ -22,7 +24,7 @@ const configFileExists = async (): Promise<boolean> => {
 
 const packageJsonConfigExists = async (): Promise<boolean> => {
   try {
-    const pJson = JSON.parse(await platform.getFile('package.json'));
+    const pJson = JSON.parse(await readLocalFile('package.json', 'utf8'));
     if (pJson.renovate) {
       return true;
     }
@@ -39,7 +41,7 @@ const closedPrExists = (config: RenovateConfig): Promise<Pr> =>
   platform.findPr({
     branchName: config.onboardingBranch,
     prTitle: config.onboardingPrTitle,
-    state: PR_STATE_NOT_OPEN,
+    state: PrState.NotOpen,
   });
 
 export const isOnboarded = async (config: RenovateConfig): Promise<boolean> => {

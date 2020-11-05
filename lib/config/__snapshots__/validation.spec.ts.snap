@@ -1,10 +1,23 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`config/validation validateConfig(config) catches invalid handlebars templates 1`] = `
+exports[`config/validation validateConfig(config) catches invalid allowedVersions regex 1`] = `
 Array [
   Object {
     "depName": "Configuration Error",
-    "message": "Invalid handlebars template in config path: commitMessage",
+    "message": "Invalid regExp for packageRules[1].allowedVersions: \`/***$}{]][/\`",
+  },
+  Object {
+    "depName": "Configuration Error",
+    "message": "Invalid regExp for packageRules[3].allowedVersions: \`!/***$}{]][/\`",
+  },
+]
+`;
+
+exports[`config/validation validateConfig(config) catches invalid templates 1`] = `
+Array [
+  Object {
+    "depName": "Configuration Error",
+    "message": "Invalid template in config path: commitMessage",
   },
 ]
 `;
@@ -53,7 +66,7 @@ Array [
   },
   Object {
     "depName": "Configuration Error",
-    "message": "packageRules: Each packageRule must contain at least one selector (paths, languages, baseBranchList, managers, datasources, depTypeList, packageNames, packagePatterns, excludePackageNames, excludePackagePatterns, sourceUrlPrefixes, updateTypes). If you wish for configuration to apply to all packages, it is not necessary to place it inside a packageRule at all.",
+    "message": "packageRules: Each packageRule must contain at least one selector (paths, languages, baseBranchList, managers, datasources, depTypeList, packageNames, packagePatterns, excludePackageNames, excludePackagePatterns, sourceUrlPrefixes, updateTypes, matchCurrentVersion). If you wish for configuration to apply to all packages, it is not necessary to place it inside a packageRule at all.",
   },
   Object {
     "depName": "Configuration Error",
@@ -66,11 +79,47 @@ exports[`config/validation validateConfig(config) errors for unsafe fileMatches 
 Array [
   Object {
     "depName": "Configuration Error",
-    "message": "Invalid regExp for docker.fileMatch: \`x?+\`",
+    "message": "Invalid regExp for dockerfile.fileMatch: \`x?+\`",
   },
   Object {
     "depName": "Configuration Error",
     "message": "Invalid regExp for npm.fileMatch: \`abc ([a-z]+) ([a-z]+))\`",
+  },
+]
+`;
+
+exports[`config/validation validateConfig(config) errors if aliases depth is more than 1 1`] = `
+Array [
+  Object {
+    "depName": "Configuration Error",
+    "message": "Invalid alias object configuration",
+  },
+]
+`;
+
+exports[`config/validation validateConfig(config) errors if aliases have invalid url 1`] = `
+Array [
+  Object {
+    "depName": "Configuration Error",
+    "message": "Invalid alias object configuration",
+  },
+]
+`;
+
+exports[`config/validation validateConfig(config) errors if fileMatch has wrong parent 1`] = `
+Array [
+  Object {
+    "depName": "Config error",
+    "message": "\\"fileMatch\\" may not be defined at the top level of a config and must instead be within a manager block",
+  },
+]
+`;
+
+exports[`config/validation validateConfig(config) errors if fileMatch has wrong parent 2`] = `
+Array [
+  Object {
+    "depName": "Config warning",
+    "message": "\\"fileMatch\\" must be configured in a manager block and not here: npm.gradle",
   },
 ]
 `;
@@ -137,3 +186,14 @@ Array [
   },
 ]
 `;
+
+exports[`config/validation validateConfig(config) validates regEx for each fileMatch 1`] = `
+Array [
+  Object {
+    "depName": "Configuration Error",
+    "message": "Invalid regExp for regexManagers[0].fileMatch: \`***$}{]][\`",
+  },
+]
+`;
+
+exports[`config/validation validateConfig(config) validates valid alias objects 1`] = `Array []`;

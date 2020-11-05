@@ -1,9 +1,18 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`workers/branch/get-updated getUpdatedPackageFiles()  does not update artifacts on update-lockfile if packageFile already updated 1`] = `
+Object {
+  "artifactErrors": Array [],
+  "reuseExistingBranch": undefined,
+  "updatedArtifacts": Array [],
+  "updatedPackageFiles": Array [],
+}
+`;
+
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles autoreplace base updated 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": undefined,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [
     Object {
@@ -17,7 +26,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles autoreplace branch needs update 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": false,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [
     Object {
@@ -31,7 +40,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles autoreplace branch no update 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": undefined,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [],
 }
@@ -40,7 +49,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles content change 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": false,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [
     Object {
@@ -54,7 +63,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles empty 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": undefined,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [],
 }
@@ -63,7 +72,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles git submodules 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": undefined,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [
     Object {
@@ -82,7 +91,7 @@ Object {
       "stderr": "some error",
     },
   ],
-  "parentBranch": undefined,
+  "reuseExistingBranch": true,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [
     Object {
@@ -96,7 +105,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles lock files 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": true,
   "updatedArtifacts": Array [
     Object {
       "contents": "some contents",
@@ -115,7 +124,7 @@ Object {
 exports[`workers/branch/get-updated getUpdatedPackageFiles() handles lockFileMaintenance 1`] = `
 Object {
   "artifactErrors": Array [],
-  "parentBranch": undefined,
+  "reuseExistingBranch": undefined,
   "updatedArtifacts": Array [
     Object {
       "contents": "some contents",
@@ -134,8 +143,27 @@ Object {
       "stderr": "some error",
     },
   ],
-  "parentBranch": undefined,
+  "reuseExistingBranch": undefined,
   "updatedArtifacts": Array [],
   "updatedPackageFiles": Array [],
+}
+`;
+
+exports[`workers/branch/get-updated getUpdatedPackageFiles() update artifacts on update-lockfile strategy 1`] = `
+Object {
+  "artifactErrors": Array [],
+  "reuseExistingBranch": undefined,
+  "updatedArtifacts": Array [
+    Object {
+      "contents": "some contents",
+      "name": "composer.lock",
+    },
+  ],
+  "updatedPackageFiles": Array [
+    Object {
+      "contents": "existing content",
+      "name": "undefined",
+    },
+  ],
 }
 `;

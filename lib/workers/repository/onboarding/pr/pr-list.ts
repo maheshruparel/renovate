@@ -1,6 +1,6 @@
-import { emojify } from '../../../../util/emoji';
-import { logger } from '../../../../logger';
 import { RenovateConfig } from '../../../../config';
+import { logger } from '../../../../logger';
+import { emojify } from '../../../../util/emoji';
 import { BranchConfig } from '../../../common';
 
 export function getPrList(
@@ -22,14 +22,14 @@ export function getPrList(
       prTitleRe,
       '@&#8203;$1'
     )}</summary>\n\n`;
-    if (branch.schedule && branch.schedule.length) {
+    if (branch.schedule?.length) {
       prDesc += `  - Schedule: ${JSON.stringify(branch.schedule)}\n`;
     }
     prDesc += `  - Branch name: \`${branch.branchName}\`\n`;
     prDesc += branch.baseBranch
       ? `  - Merge into: \`${branch.baseBranch}\`\n`
       : '';
-    const seen = [];
+    const seen: string[] = [];
     for (const upgrade of branch.upgrades) {
       let text = '';
       if (upgrade.updateType === 'lockFileMaintenance') {

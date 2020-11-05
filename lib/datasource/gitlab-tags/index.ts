@@ -1,11 +1,13 @@
-import is from '@sindresorhus/is';
-import { api } from '../../platform/gitlab/gl-got-wrapper';
-import { logger } from '../../logger';
+import URL from 'url';
+import * as packageCache from '../../util/cache/package';
+import { GitlabHttp } from '../../util/http/gitlab';
 import { GetReleasesConfig, ReleaseResult } from '../common';
 
-const { get: glGot } = api;
+const gitlabApi = new GitlabHttp();
 
 export const id = 'gitlab-tags';
+export const defaultRegistryUrls = ['https://gitlab.com'];
+export const registryStrategy = 'first';
 
 const cacheNamespace = 'datasource-gitlab';
 function getCacheKey(depHost: string, repo: string): string {
@@ -20,16 +22,11 @@ type GitlabTag = {
   };
 };
 
-export async function getPkgReleases({
-  registryUrls,
+export async function getReleases({
+  registryUrl: depHost,
   lookupName: repo,
 }: GetReleasesConfig): Promise<ReleaseResult | null> {
-  // Use registryUrls if present, otherwise default to publid gitlab.com
-  const depHost = is.nonEmptyArray(registryUrls)
-    ? registryUrls[0].replace(/\/$/, '')
-    : 'https://gitlab.com';
-  let gitlabTags: GitlabTag[];
-  const cachedResult = await renovateCache.get<ReleaseResult>(
+  const cachedResult = await packageCache.get<ReleaseResult>(
     cacheNamespace,
     getCacheKey(depHost, repo)
   );
@@ -40,27 +37,20 @@ export async function getPkgReleases({
 
   const urlEncodedRepo = encodeURIComponent(repo);
 
-  try {
-    // tag
-    const url = `${depHost}/api/v4/projects/${urlEncodedRepo}/repository/tags?per_page=100`;
+  // tag
+  const url = URL.resolve(
+    depHost,
+    `/api/v4/projects/${urlEncodedRepo}/repository/tags?per_page=100`
+  );
 
-    gitlabTags = (
-      await glGot<GitlabTag[]>(url, {
-        paginate: true,
-      })
-    ).body;
-  } catch (err) {
-    // istanbul ignore next
-    logger.debug({ repo, err }, 'Error retrieving from Gitlab');
-  }
-
-  // istanbul ignore if
-  if (!gitlabTags) {
-    return null;
-  }
+  const gitlabTags = (
+    await gitlabApi.getJson<GitlabTag[]>(url, {
+      paginate: true,
+    })
+  ).body;
 
   const dependency: ReleaseResult = {
-    sourceUrl: `${depHost}/${repo}`,
+    sourceUrl: URL.resolve(depHost, repo),
     releases: null,
   };
   dependency.releases = gitlabTags.map(({ name, commit }) => ({
@@ -70,7 +60,7 @@ export async function getPkgReleases({
   }));
 
   const cacheMinutes = 10;
-  await renovateCache.set(
+  await packageCache.set(
     cacheNamespace,
     getCacheKey(depHost, repo),
     dependency,

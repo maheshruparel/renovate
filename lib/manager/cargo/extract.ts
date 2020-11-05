@@ -1,9 +1,9 @@
-import { parse } from 'toml';
+import { parse } from '@iarna/toml';
+import * as datasourceCrate from '../../datasource/crate';
 import { logger } from '../../logger';
+import { SkipReason } from '../../types';
 import { PackageDependency, PackageFile } from '../common';
 import { CargoConfig, CargoSection } from './types';
-import * as datasourceCrate from '../../datasource/crate';
-import { SkipReason } from '../../types';
 
 function extractFromSection(
   parsedContent: CargoSection,
@@ -15,7 +15,7 @@ function extractFromSection(
   if (!sectionContent) {
     return [];
   }
-  Object.keys(sectionContent).forEach(depName => {
+  Object.keys(sectionContent).forEach((depName) => {
     let skipReason: SkipReason;
     let currentValue = sectionContent[depName];
     let nestedVersion = false;
@@ -68,7 +68,8 @@ export function extractPackageFile(
   logger.trace(`cargo.extractPackageFile(${fileName})`);
   let parsedContent: CargoConfig;
   try {
-    parsedContent = parse(content);
+    // TODO: fix type
+    parsedContent = parse(content) as any;
   } catch (err) {
     logger.debug({ err }, 'Error parsing Cargo.toml file');
     return null;
@@ -85,7 +86,7 @@ export function extractPackageFile(
   let targetDeps: PackageDependency[] = [];
   if (targetSection) {
     const targets = Object.keys(targetSection);
-    targets.forEach(target => {
+    targets.forEach((target) => {
       const targetContent = parsedContent.target[target];
       // Dependencies for `${target}`
       const deps = [
